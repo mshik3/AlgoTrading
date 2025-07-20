@@ -5,10 +5,11 @@ This strategy identifies assets that have deviated significantly from their hist
 averages and bets on them returning to normal levels. It uses multiple technical
 indicators to confirm oversold/overbought conditions.
 
-Key Components:
-- RSI for momentum analysis
-- Bollinger Bands for volatility-based signals
-- Moving averages for trend confirmation
+Enhanced with academic research:
+- Wilder's RSI for accurate momentum analysis
+- Statistical mean reversion validation (ADF, Hurst exponent)
+- Proper Z-score calculation for deviation measurement
+- O-U process optimal threshold calculation
 - Volume analysis for confirmation
 """
 
@@ -20,52 +21,208 @@ from datetime import datetime
 
 from ..base import BaseStrategy, StrategySignal, SignalType
 from indicators import TechnicalIndicators
+from indicators.statistical_tests import comprehensive_mean_reversion_test
+from indicators.ou_process import fit_ou_process_to_data
 
 logger = logging.getLogger(__name__)
 
 
 class MeanReversionStrategy(BaseStrategy):
     """
-    Mean Reversion Strategy for equity trading.
+    Enhanced Mean Reversion Strategy for equity trading.
 
-    Strategy Logic:
-    - Buy when price is oversold (RSI < 30, below lower Bollinger Band)
-    - Additional confirmation from price being >2 std dev from MA
-    - Sell when price returns to mean or becomes overbought
-    - Uses volume confirmation to avoid low-volume moves
+    Strategy Logic (Updated with Academic Research):
+    - Statistical validation: Only trade assets that exhibit mean-reverting properties
+    - Entry: Wilder's RSI < 30 AND Z-score < -1.5 AND below lower Bollinger Band
+    - Exit: Mean reversion complete OR Wilder's RSI > 70 OR stop loss/take profit
+    - Volume confirmation to avoid low-volume moves
+    - O-U process optimal thresholds when possible
+    - Half-life analysis for position sizing
     """
 
     def __init__(self, symbols: List[str], **config):
         """
-        Initialize Mean Reversion Strategy.
+        Initialize Enhanced Mean Reversion Strategy.
 
         Args:
             symbols: List of symbols to trade
             **config: Strategy configuration parameters
         """
-        # Default configuration for mean reversion
+        # Enhanced default configuration based on research
         default_config = {
-            "rsi_oversold": 30,  # RSI threshold for oversold
-            "rsi_overbought": 70,  # RSI threshold for overbought
+            "wilder_rsi_oversold": 30,  # Wilder's RSI threshold for oversold
+            "wilder_rsi_overbought": 70,  # Wilder's RSI threshold for overbought
+            "zscore_entry_threshold": -1.5,  # Z-score threshold for entry (negative = oversold)
+            "zscore_exit_threshold": 0.5,  # Z-score threshold for exit
+            "zscore_window": 20,  # Window for Z-score calculation
             "bb_period": 20,  # Bollinger Bands period
             "bb_std": 2,  # Bollinger Bands standard deviations
             "sma_period": 50,  # Simple moving average period
             "volume_sma_period": 20,  # Volume SMA period for confirmation
             "volume_multiplier": 1.2,  # Volume must be X times average
-            "min_std_devs": 1.5,  # Minimum std devs from MA to consider
             "max_holding_period": 30,  # Max days to hold position
             "take_profit_pct": 0.15,  # 15% take profit target
             "stop_loss_pct": 0.08,  # 8% stop loss
-            "min_confidence": 0.6,  # Lower threshold for mean reversion
+            "min_confidence": 0.7,  # Higher threshold for enhanced strategy
+            "statistical_validation": True,  # Enable statistical mean reversion tests
+            "use_ou_thresholds": True,  # Use O-U process optimal thresholds
+            "min_hurst_exponent": 0.5,  # Maximum Hurst exponent for mean reversion
+            "min_mean_reversion_score": 3,  # Minimum score from comprehensive test
+            "revalidate_days": 60,  # Re-run statistical tests every N days
         }
 
         # Merge default config with provided config
         merged_config = {**default_config, **config}
 
-        super().__init__(name="Mean Reversion", symbols=symbols, **merged_config)
+        super().__init__(
+            name="Enhanced Mean Reversion", symbols=symbols, **merged_config
+        )
 
         # Track when positions were opened for holding period limits
         self.position_entry_dates = {}
+
+        # Track statistical validation results and timestamps
+        self._statistical_validation_cache = {}
+        self._last_validation_dates = {}
+
+        # Track O-U process optimal thresholds
+        self._ou_thresholds_cache = {}
+
+    def _validate_mean_reversion_properties(
+        self, symbol: str, data: pd.DataFrame
+    ) -> bool:
+        """
+        Validate that the asset exhibits mean-reverting properties using statistical tests.
+
+        Args:
+            symbol: Asset symbol
+            data: Historical price data
+
+        Returns:
+            True if asset shows mean-reverting properties, False otherwise
+        """
+        if not self.config["statistical_validation"]:
+            return True  # Skip validation if disabled
+
+        try:
+            # Check if we have cached results that are still valid
+            current_date = datetime.now()
+            if symbol in self._last_validation_dates:
+                days_since_validation = (
+                    current_date - self._last_validation_dates[symbol]
+                ).days
+                if days_since_validation < self.config["revalidate_days"]:
+                    cached_result = self._statistical_validation_cache.get(symbol, {})
+                    return cached_result.get("is_mean_reverting", False)
+
+            # Run comprehensive statistical tests
+            logger.info(f"Running statistical validation for {symbol}...")
+            test_results = comprehensive_mean_reversion_test(data["Close"])
+
+            # Cache results
+            self._statistical_validation_cache[symbol] = test_results
+            self._last_validation_dates[symbol] = current_date
+
+            # Extract key metrics
+            overall_assessment = test_results.get("overall_assessment", {})
+            mean_reversion_score = overall_assessment.get("mean_reversion_score", 0)
+
+            hurst_results = test_results.get("hurst_exponent", {})
+            hurst_value = hurst_results.get("hurst_exponent", 0.5)
+
+            # Determine if asset is suitable for mean reversion trading
+            is_suitable = (
+                mean_reversion_score >= self.config["min_mean_reversion_score"]
+                and hurst_value < self.config["min_hurst_exponent"]
+            )
+
+            if is_suitable:
+                logger.info(
+                    f"✓ {symbol} passes mean reversion validation (score: {mean_reversion_score}/9, Hurst: {hurst_value:.3f})"
+                )
+            else:
+                logger.warning(
+                    f"✗ {symbol} fails mean reversion validation (score: {mean_reversion_score}/9, Hurst: {hurst_value:.3f})"
+                )
+
+            return is_suitable
+
+        except Exception as e:
+            logger.error(f"Statistical validation failed for {symbol}: {str(e)}")
+            return False  # Conservative approach: reject if validation fails
+
+    def _calculate_ou_optimal_thresholds(
+        self, symbol: str, data: pd.DataFrame
+    ) -> Dict[str, float]:
+        """
+        Calculate optimal entry/exit thresholds using O-U process framework.
+
+        Args:
+            symbol: Asset symbol
+            data: Historical price data
+
+        Returns:
+            Dictionary with optimal thresholds or fallback values
+        """
+        try:
+            # Fit O-U process to price data
+            logger.info(f"Fitting O-U process for {symbol}...")
+            ou_process = fit_ou_process_to_data(data["Close"])
+
+            if ou_process.fitted:
+                # Calculate optimal thresholds
+                thresholds = ou_process.calculate_optimal_thresholds(
+                    transaction_cost=0.002, discount_rate=0.05  # 0.2% transaction cost
+                )
+
+                # Calculate expected returns
+                expected_returns = ou_process.expected_return_per_unit_time(
+                    thresholds["entry_threshold"], thresholds["exit_threshold"]
+                )
+
+                logger.info(
+                    f"✓ O-U optimal thresholds for {symbol}: entry={thresholds['entry_threshold']:.2f}, exit={thresholds['exit_threshold']:.2f}"
+                )
+
+                # Add metadata
+                thresholds.update(
+                    {
+                        "ou_fitted": True,
+                        "half_life": ou_process.get_half_life(),
+                        "expected_return_annualized": expected_returns.get(
+                            "annualized_return", np.nan
+                        ),
+                        "ou_parameters": {
+                            "theta": ou_process.theta,
+                            "mu": ou_process.mu,
+                            "sigma": ou_process.sigma,
+                        },
+                    }
+                )
+
+                return thresholds
+            else:
+                logger.warning(
+                    f"O-U process fitting failed for {symbol}, using fallback thresholds"
+                )
+
+        except Exception as e:
+            logger.error(f"O-U threshold calculation failed for {symbol}: {str(e)}")
+
+        # Fallback to traditional thresholds
+        current_price = data["Close"].iloc[-1]
+        price_std = data["Close"].rolling(20).std().iloc[-1]
+
+        return {
+            "entry_threshold": current_price - 2 * price_std,
+            "exit_threshold": current_price - 0.5 * price_std,
+            "take_profit_threshold": current_price + 1.5 * price_std,
+            "theta": data["Close"].rolling(50).mean().iloc[-1],
+            "ou_fitted": False,
+            "half_life": np.nan,
+            "expected_return_annualized": np.nan,
+            "ou_parameters": None,
+        }
 
     def generate_signals(
         self, market_data: Dict[str, pd.DataFrame]
@@ -110,7 +267,7 @@ class MeanReversionStrategy(BaseStrategy):
         self, symbol: str, data: pd.DataFrame
     ) -> Optional[StrategySignal]:
         """
-        Determine if we should enter a position based on mean reversion criteria.
+        Determine if we should enter a position based on enhanced mean reversion criteria.
 
         Args:
             symbol: Stock symbol
@@ -127,10 +284,21 @@ class MeanReversionStrategy(BaseStrategy):
         if len(data) < 60:
             return None
 
+        # Statistical validation - only trade assets with mean-reverting properties
+        if not self._validate_mean_reversion_properties(symbol, data):
+            logger.debug(f"{symbol}: Failed statistical mean reversion validation")
+            return None
+
+        # Calculate O-U optimal thresholds if enabled
+        ou_thresholds = None
+        if self.config["use_ou_thresholds"]:
+            ou_thresholds = self._calculate_ou_optimal_thresholds(symbol, data)
+            self._ou_thresholds_cache[symbol] = ou_thresholds
+
         # Calculate technical indicators
         try:
             indicators = TechnicalIndicators(data.copy())
-            indicators.add_all_basic()
+            indicators.add_all_basic()  # This now includes Wilder's RSI and Z-score
             analysis_data = indicators.get_data()
 
             # Get latest values
@@ -138,7 +306,8 @@ class MeanReversionStrategy(BaseStrategy):
 
             # Check for required indicators
             required_indicators = [
-                "RSI_14",
+                "WRSI_14",  # Wilder's RSI (more accurate)
+                "ZScore_20",  # Z-score for proper deviation measurement
                 "BB_Lower_20",
                 "BB_Upper_20",
                 "SMA_50",
@@ -148,41 +317,49 @@ class MeanReversionStrategy(BaseStrategy):
                 logger.warning(f"Missing required indicators for {symbol}")
                 return None
 
-            # Mean reversion entry conditions
+            # Enhanced mean reversion entry conditions
             conditions_met = []
             confidence_factors = []
 
-            # 1. RSI Oversold Condition
-            rsi = latest["RSI_14"]
-            if pd.notna(rsi) and rsi < self.config["rsi_oversold"]:
-                conditions_met.append("RSI_OVERSOLD")
-                confidence_factors.append(0.3)
-                logger.debug(f"{symbol}: RSI oversold ({rsi:.2f})")
+            # 1. Wilder's RSI Oversold Condition (Fixed calculation)
+            wilder_rsi = latest["WRSI_14"]
+            if pd.notna(wilder_rsi) and wilder_rsi < self.config["wilder_rsi_oversold"]:
+                conditions_met.append("WILDER_RSI_OVERSOLD")
+                confidence_factors.append(0.35)  # Higher weight for accurate RSI
+                logger.debug(f"{symbol}: Wilder's RSI oversold ({wilder_rsi:.2f})")
 
-            # 2. Below Lower Bollinger Band
+            # 2. Z-score Oversold Condition (Fixed standard deviation logic)
+            zscore = latest["ZScore_20"]
+            if pd.notna(zscore) and zscore < self.config["zscore_entry_threshold"]:
+                conditions_met.append("ZSCORE_OVERSOLD")
+                confidence_factors.append(
+                    0.35
+                )  # High weight for proper statistical measure
+                logger.debug(f"{symbol}: Z-score oversold ({zscore:.2f})")
+
+            # 3. Below Lower Bollinger Band
             close_price = latest["Close"]
             bb_lower = latest["BB_Lower_20"]
             if pd.notna(bb_lower) and close_price < bb_lower:
                 conditions_met.append("BELOW_BB_LOWER")
-                confidence_factors.append(0.35)
+                confidence_factors.append(0.20)
                 logger.debug(
                     f"{symbol}: Below lower BB ({close_price:.2f} < {bb_lower:.2f})"
                 )
 
-            # 3. Significant deviation from moving average
-            sma_50 = latest["SMA_50"]
-            if pd.notna(sma_50):
-                deviation_pct = abs(close_price - sma_50) / sma_50
-                std_devs = deviation_pct / (
-                    analysis_data["Close"].rolling(20).std().iloc[-1] / sma_50
-                )
+            # 4. O-U Process Threshold (if available)
+            if ou_thresholds and ou_thresholds.get("ou_fitted", False):
+                entry_threshold = ou_thresholds["entry_threshold"]
+                if close_price < entry_threshold:
+                    conditions_met.append("OU_ENTRY_THRESHOLD")
+                    confidence_factors.append(
+                        0.25
+                    )  # High weight for optimal thresholds
+                    logger.debug(
+                        f"{symbol}: Below O-U entry threshold ({close_price:.2f} < {entry_threshold:.2f})"
+                    )
 
-                if std_devs > self.config["min_std_devs"] and close_price < sma_50:
-                    conditions_met.append("BELOW_MA_THRESHOLD")
-                    confidence_factors.append(0.25)
-                    logger.debug(f"{symbol}: Below MA by {std_devs:.2f} std devs")
-
-            # 4. Volume confirmation (optional but increases confidence)
+            # 5. Volume confirmation (enhanced)
             volume = latest["Volume"]
             volume_sma = latest["Volume_SMA_20"]
             if (
@@ -190,22 +367,50 @@ class MeanReversionStrategy(BaseStrategy):
                 and volume > volume_sma * self.config["volume_multiplier"]
             ):
                 conditions_met.append("VOLUME_CONFIRMATION")
-                confidence_factors.append(0.1)
+                confidence_factors.append(0.10)
                 logger.debug(f"{symbol}: High volume confirmation")
 
-            # Need at least 2 main conditions (RSI oversold or below BB + another)
-            main_conditions = ["RSI_OVERSOLD", "BELOW_BB_LOWER", "BELOW_MA_THRESHOLD"]
-            main_conditions_met = [c for c in conditions_met if c in main_conditions]
+            # Enhanced entry logic: Need at least 2 strong conditions
+            strong_conditions = [
+                "WILDER_RSI_OVERSOLD",
+                "ZSCORE_OVERSOLD",
+                "BELOW_BB_LOWER",
+                "OU_ENTRY_THRESHOLD",
+            ]
+            strong_conditions_met = [
+                c for c in conditions_met if c in strong_conditions
+            ]
 
-            if len(main_conditions_met) >= 2:
+            if len(strong_conditions_met) >= 2:
                 # Calculate confidence based on conditions met
-                confidence = min(sum(confidence_factors), 1.0)
+                base_confidence = sum(confidence_factors)
 
-                # Calculate stop loss and take profit
-                stop_loss = close_price * (1 - self.config["stop_loss_pct"])
-                take_profit = close_price * (1 + self.config["take_profit_pct"])
+                # Add bonus for half-life (faster mean reversion = higher confidence)
+                half_life = indicators.get_half_life()
+                if not np.isnan(half_life) and half_life < 20:
+                    base_confidence += 0.10
+                    conditions_met.append("FAST_MEAN_REVERSION")
 
-                # Create signal
+                confidence = min(base_confidence, 1.0)
+
+                # Enhanced stop loss and take profit
+                if ou_thresholds and ou_thresholds.get("ou_fitted", False):
+                    # Use O-U optimal levels
+                    stop_loss = (
+                        ou_thresholds["entry_threshold"] * 0.98
+                    )  # 2% buffer below entry
+                    take_profit = ou_thresholds["take_profit_threshold"]
+                else:
+                    # Use ATR-based approach
+                    atr = latest.get(
+                        "ATR_14", close_price * 0.02
+                    )  # Fallback to 2% if ATR not available
+                    stop_loss = close_price - (2.5 * atr)  # 2.5 ATR stop loss
+                    take_profit = close_price + (
+                        3.5 * atr
+                    )  # 3.5 ATR take profit (1.4:1 risk-reward)
+
+                # Create enhanced signal
                 signal = StrategySignal(
                     symbol=symbol,
                     signal_type=SignalType.BUY,
@@ -216,15 +421,18 @@ class MeanReversionStrategy(BaseStrategy):
                     strategy_name=self.name,
                     metadata={
                         "conditions_met": conditions_met,
-                        "rsi": rsi,
+                        "wilder_rsi": wilder_rsi,
+                        "zscore": zscore,
                         "bb_lower": bb_lower,
-                        "sma_50": sma_50,
-                        "entry_reason": "mean_reversion_oversold",
+                        "half_life": half_life,
+                        "ou_thresholds": ou_thresholds,
+                        "entry_reason": "enhanced_mean_reversion_oversold",
+                        "statistical_validation": True,
                     },
                 )
 
                 logger.info(
-                    f"Mean reversion BUY signal for {symbol}: confidence={confidence:.3f}, conditions={conditions_met}"
+                    f"Enhanced mean reversion BUY signal for {symbol}: confidence={confidence:.3f}, conditions={conditions_met}"
                 )
                 return signal
 
@@ -238,7 +446,7 @@ class MeanReversionStrategy(BaseStrategy):
         self, symbol: str, data: pd.DataFrame
     ) -> Optional[StrategySignal]:
         """
-        Determine if we should exit existing position.
+        Determine if we should exit existing position using enhanced criteria.
 
         Args:
             symbol: Stock symbol
@@ -263,7 +471,10 @@ class MeanReversionStrategy(BaseStrategy):
             latest = analysis_data.iloc[-1]
             current_price = latest["Close"]
 
-            # Exit conditions
+            # Get O-U thresholds if available
+            ou_thresholds = self._ou_thresholds_cache.get(symbol)
+
+            # Exit conditions with enhanced logic
             exit_reasons = []
             confidence = 0.8  # High confidence for exits
 
@@ -277,24 +488,38 @@ class MeanReversionStrategy(BaseStrategy):
                 exit_reasons.append("STOP_LOSS")
                 confidence = 1.0
 
-            # 3. Mean reversion completed - price returned to or above SMA
-            elif pd.notna(latest.get("SMA_50")) and current_price >= latest["SMA_50"]:
-                exit_reasons.append("MEAN_REVERSION_COMPLETE")
-
-            # 4. RSI became overbought (mean reversion may have overcorrected)
+            # 3. Z-score mean reversion completed (enhanced exit logic)
             elif (
-                pd.notna(latest.get("RSI_14"))
-                and latest["RSI_14"] > self.config["rsi_overbought"]
+                pd.notna(latest.get("ZScore_20"))
+                and latest["ZScore_20"] > self.config["zscore_exit_threshold"]
             ):
-                exit_reasons.append("RSI_OVERBOUGHT")
+                exit_reasons.append("ZSCORE_MEAN_REVERSION_COMPLETE")
 
-            # 5. Maximum holding period exceeded
+            # 4. O-U Process Exit Threshold
+            elif ou_thresholds and ou_thresholds.get("ou_fitted", False):
+                exit_threshold = ou_thresholds["exit_threshold"]
+                if current_price >= exit_threshold:
+                    exit_reasons.append("OU_EXIT_THRESHOLD")
+                    confidence = 0.9  # High confidence for optimal threshold
+
+            # 5. Wilder's RSI became overbought (more accurate signal)
+            elif (
+                pd.notna(latest.get("WRSI_14"))
+                and latest["WRSI_14"] > self.config["wilder_rsi_overbought"]
+            ):
+                exit_reasons.append("WILDER_RSI_OVERBOUGHT")
+
+            # 6. Price returned to SMA (traditional mean reversion complete)
+            elif pd.notna(latest.get("SMA_50")) and current_price >= latest["SMA_50"]:
+                exit_reasons.append("PRICE_ABOVE_SMA")
+
+            # 7. Maximum holding period exceeded
             elif symbol in self.position_entry_dates:
                 days_held = (datetime.now() - self.position_entry_dates[symbol]).days
                 if days_held >= self.config["max_holding_period"]:
                     exit_reasons.append("MAX_HOLDING_PERIOD")
 
-            # 6. Price above upper Bollinger Band (potential reversal)
+            # 8. Price above upper Bollinger Band (potential reversal)
             elif (
                 pd.notna(latest.get("BB_Upper_20"))
                 and current_price > latest["BB_Upper_20"]
@@ -314,13 +539,16 @@ class MeanReversionStrategy(BaseStrategy):
                         "profit_loss_pct": (current_price - entry_price)
                         / entry_price
                         * 100,
-                        "rsi": latest.get("RSI_14"),
+                        "wilder_rsi": latest.get("WRSI_14"),
+                        "zscore": latest.get("ZScore_20"),
                         "sma_50": latest.get("SMA_50"),
+                        "ou_thresholds": ou_thresholds,
+                        "enhanced_exit": True,
                     },
                 )
 
                 logger.info(
-                    f"Mean reversion SELL signal for {symbol}: reasons={exit_reasons}, P&L={(current_price-entry_price)/entry_price*100:.2f}%"
+                    f"Enhanced mean reversion SELL signal for {symbol}: reasons={exit_reasons}, P&L={(current_price-entry_price)/entry_price*100:.2f}%"
                 )
                 return signal
 
@@ -328,6 +556,41 @@ class MeanReversionStrategy(BaseStrategy):
             logger.error(f"Error analyzing exit for {symbol}: {str(e)}")
 
         return None
+
+    def get_statistical_validation_summary(self) -> Dict:
+        """Get summary of statistical validation results for all symbols."""
+        summary = {}
+        for symbol, results in self._statistical_validation_cache.items():
+            if results:
+                overall_assessment = results.get("overall_assessment", {})
+                summary[symbol] = {
+                    "mean_reversion_score": overall_assessment.get(
+                        "mean_reversion_score", 0
+                    ),
+                    "conclusion": overall_assessment.get("conclusion", "Unknown"),
+                    "trading_recommendation": overall_assessment.get(
+                        "trading_recommendation", "Unknown"
+                    ),
+                    "last_validated": self._last_validation_dates.get(symbol, "Never"),
+                }
+        return summary
+
+    def get_ou_thresholds_summary(self) -> Dict:
+        """Get summary of O-U process optimal thresholds for all symbols."""
+        summary = {}
+        for symbol, thresholds in self._ou_thresholds_cache.items():
+            if thresholds:
+                summary[symbol] = {
+                    "ou_fitted": thresholds.get("ou_fitted", False),
+                    "entry_threshold": thresholds.get("entry_threshold", np.nan),
+                    "exit_threshold": thresholds.get("exit_threshold", np.nan),
+                    "half_life": thresholds.get("half_life", np.nan),
+                    "expected_return_annualized": thresholds.get(
+                        "expected_return_annualized", np.nan
+                    ),
+                    "ou_parameters": thresholds.get("ou_parameters"),
+                }
+        return summary
 
     def update_position(
         self, symbol: str, signal: StrategySignal, executed_price: float, quantity: int
@@ -342,7 +605,7 @@ class MeanReversionStrategy(BaseStrategy):
                 del self.position_entry_dates[symbol]
 
     def get_strategy_summary(self) -> Dict:
-        """Get strategy-specific summary information."""
+        """Get enhanced strategy-specific summary information."""
         summary = self.get_performance_summary()
 
         # Add mean reversion specific metrics
@@ -397,5 +660,17 @@ class MeanReversionStrategy(BaseStrategy):
                     }
                 )
 
+        # Add enhanced summaries
+        summary["statistical_validation"] = self.get_statistical_validation_summary()
+        summary["ou_thresholds"] = self.get_ou_thresholds_summary()
         summary["strategy_config"] = self.config
+        summary["enhancements"] = [
+            "Wilder's RSI (accurate calculation)",
+            "Z-score deviation measurement",
+            "Statistical mean reversion validation (ADF, Hurst)",
+            "O-U process optimal thresholds",
+            "ATR-based risk management",
+            "Half-life analysis",
+        ]
+
         return summary

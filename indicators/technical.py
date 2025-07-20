@@ -78,6 +78,145 @@ def calculate_rsi(data: pd.Series, window: int = 14) -> pd.Series:
     return rsi
 
 
+def calculate_wilder_rsi(data: pd.Series, window: int = 14) -> pd.Series:
+    """
+    Calculate Wilder's RSI using proper exponential smoothing.
+
+    This is the original RSI calculation by J. Welles Wilder using his smoothing method:
+    Smoothed value = Previous smoothed value + (1/n) * (Current value - Previous smoothed value)
+
+    This method is more accurate than the simple moving average approach for RSI.
+
+    Args:
+        data: Price series (typically close prices)
+        window: Number of periods for RSI calculation
+
+    Returns:
+        Series with Wilder's RSI values (0-100)
+    """
+    if window <= 0:
+        raise ValueError("Window must be positive for Wilder's RSI calculation.")
+
+    delta = data.diff()
+
+    # Separate gains and losses
+    gains = delta.where(delta > 0, 0)
+    losses = -delta.where(delta < 0, 0)
+
+    # Initialize result series
+    rsi = pd.Series(index=data.index, dtype=float)
+    rsi.iloc[:window] = np.nan
+
+    # Calculate initial averages using SMA for first window
+    initial_avg_gain = gains.iloc[1 : window + 1].mean()
+    initial_avg_loss = losses.iloc[1 : window + 1].mean()
+
+    # Start Wilder's smoothing from the window+1 position
+    smoothed_gains = [initial_avg_gain]
+    smoothed_losses = [initial_avg_loss]
+
+    for i in range(window + 1, len(data)):
+        # Wilder's smoothing formula
+        smoothed_gain = smoothed_gains[-1] + (1 / window) * (
+            gains.iloc[i] - smoothed_gains[-1]
+        )
+        smoothed_loss = smoothed_losses[-1] + (1 / window) * (
+            losses.iloc[i] - smoothed_losses[-1]
+        )
+
+        smoothed_gains.append(smoothed_gain)
+        smoothed_losses.append(smoothed_loss)
+
+        # Calculate RSI
+        if smoothed_loss == 0:
+            rsi.iloc[i] = 100
+        else:
+            rs = smoothed_gain / smoothed_loss
+            rsi.iloc[i] = 100 - (100 / (1 + rs))
+
+    return rsi
+
+
+def calculate_zscore(
+    data: pd.Series, window: int = 20, min_periods: int = None
+) -> pd.Series:
+    """
+    Calculate Z-score for mean reversion analysis.
+
+    Z-score measures how many standard deviations a value is from the mean.
+    This is the correct way to measure mean reversion strength.
+
+    Args:
+        data: Price series
+        window: Rolling window for mean and std calculation
+        min_periods: Minimum periods required for calculation
+
+    Returns:
+        Series with Z-score values
+    """
+    if min_periods is None:
+        min_periods = window
+
+    # Calculate rolling mean and standard deviation
+    rolling_mean = data.rolling(window=window, min_periods=min_periods).mean()
+    rolling_std = data.rolling(window=window, min_periods=min_periods).std()
+
+    # Calculate Z-score: (current_value - mean) / std_dev
+    zscore = (data - rolling_mean) / rolling_std
+
+    return zscore
+
+
+def calculate_half_life(data: pd.Series) -> float:
+    """
+    Calculate the half-life of mean reversion for a time series.
+
+    Half-life indicates how long it takes for a deviation from the mean
+    to decay by half. Shorter half-life indicates stronger mean reversion.
+
+    Args:
+        data: Price series
+
+    Returns:
+        Half-life in periods (e.g., days if daily data)
+    """
+    # Calculate price differences (lag-1 regression)
+    lagged_data = data.shift(1)
+    price_diff = data.diff()
+
+    # Remove NaN values
+    valid_indices = ~(lagged_data.isna() | price_diff.isna())
+    y = price_diff[valid_indices]
+    x = lagged_data[valid_indices]
+
+    if len(y) < 2:
+        return np.nan
+
+    # Perform linear regression: Δp_t = α + β * p_{t-1} + ε_t
+    # The coefficient β tells us the mean reversion speed
+    x_mean = x.mean()
+    y_mean = y.mean()
+
+    numerator = ((x - x_mean) * (y - y_mean)).sum()
+    denominator = ((x - x_mean) ** 2).sum()
+
+    if denominator == 0:
+        return np.nan
+
+    beta = numerator / denominator
+
+    # Half-life = -ln(2) / ln(1 + β)
+    # For mean-reverting series, β should be negative
+    if beta >= 0:
+        return np.nan  # No mean reversion detected
+
+    try:
+        half_life = -np.log(2) / np.log(1 + beta)
+        return half_life
+    except (ValueError, ZeroDivisionError):
+        return np.nan
+
+
 def calculate_macd(
     data: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
 ) -> pd.DataFrame:
@@ -261,6 +400,27 @@ class TechnicalIndicators:
         self.data[f"RSI_{period}"] = calculate_rsi(self.data[column], period)
         return self
 
+    def add_wilder_rsi(self, period: int = 14, column: str = "Close") -> "TechnicalIndicators":
+        """Add Wilder's RSI (more accurate) to the data."""
+        self.data[f"WRSI_{period}"] = calculate_wilder_rsi(self.data[column], period)
+        return self
+
+    def add_zscore(self, window: int = 20, column: str = "Close") -> "TechnicalIndicators":
+        """Add Z-score for mean reversion analysis."""
+        self.data[f"ZScore_{window}"] = calculate_zscore(self.data[column], window)
+        return self
+
+    def add_half_life_analysis(self, column: str = "Close") -> "TechnicalIndicators":
+        """Add half-life of mean reversion."""
+        half_life = calculate_half_life(self.data[column])
+        # Store as metadata - half-life is a single value for the entire series
+        self._half_life = half_life
+        return self
+
+    def get_half_life(self) -> float:
+        """Get the calculated half-life of mean reversion."""
+        return getattr(self, '_half_life', np.nan)
+
     def add_macd(
         self, fast: int = 12, slow: int = 26, signal: int = 9, column: str = "Close"
     ) -> "TechnicalIndicators":
@@ -323,7 +483,10 @@ class TechnicalIndicators:
             .add_sma(200)  # Key moving averages
             .add_ema(12)
             .add_ema(26)  # MACD components
-            .add_rsi(14)  # RSI
+            .add_rsi(14)  # Standard RSI
+            .add_wilder_rsi(14)  # Wilder's RSI (more accurate)
+            .add_zscore(20)  # Z-score for mean reversion
+            .add_half_life_analysis()  # Half-life analysis
             .add_macd()  # MACD
             .add_bollinger_bands(20, 2)  # Bollinger Bands
             .add_stochastic(14, 3)  # Stochastic
