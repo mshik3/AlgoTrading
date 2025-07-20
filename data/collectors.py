@@ -4,26 +4,134 @@ Handles fetching data from various sources.
 """
 
 import logging
+import time
+import random
 from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from .storage import MarketData
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# User agents for rotation to avoid rate limiting
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/91.0.864.59",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+]
+
 
 class YahooFinanceCollector:
-    """Collector for Yahoo Finance data."""
+    """Collector for Yahoo Finance data with rate limiting protection."""
 
-    def __init__(self):
-        """Initialize the Yahoo Finance collector."""
+    def __init__(self, delay_range=(1, 3), max_retries=3, backoff_factor=2):
+        """
+        Initialize the Yahoo Finance collector with rate limiting protection.
+
+        Args:
+            delay_range: Tuple of (min, max) seconds to wait between requests
+            max_retries: Maximum number of retry attempts for failed requests
+            backoff_factor: Multiplier for exponential backoff between retries
+        """
         self.source_name = "Yahoo Finance"
+        self.delay_range = delay_range
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.session = self._create_session()
+        self.last_request_time = 0
+
+    def _create_session(self):
+        """Create a configured requests session with retry strategy."""
+        session = requests.Session()
+
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=self.max_retries,
+            backoff_factor=self.backoff_factor,
+            status_forcelist=[429, 500, 502, 503, 504],  # HTTP status codes to retry
+            allowed_methods=["GET"],
+        )
+
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy, pool_connections=10, pool_maxsize=20
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        # Set random user agent
+        session.headers.update(
+            {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate",
+                "Connection": "keep-alive",
+                "Cache-Control": "no-cache",
+            }
+        )
+
+        return session
+
+    def _rate_limit_delay(self):
+        """Implement rate limiting with random delays."""
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+
+        # Calculate delay needed
+        min_delay, max_delay = self.delay_range
+        required_delay = random.uniform(min_delay, max_delay)
+
+        if time_since_last < required_delay:
+            sleep_time = required_delay - time_since_last
+            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+
+        self.last_request_time = time.time()
+
+    def _retry_with_backoff(self, func, *args, **kwargs):
+        """Retry a function with exponential backoff."""
+        for attempt in range(self.max_retries + 1):
+            try:
+                self._rate_limit_delay()
+                return func(*args, **kwargs)
+            except Exception as e:
+                if (
+                    "rate limit" in str(e).lower()
+                    or "too many requests" in str(e).lower()
+                ):
+                    if attempt < self.max_retries:
+                        backoff_time = (
+                            self.backoff_factor**attempt
+                        ) * random.uniform(5, 10)
+                        logger.warning(
+                            f"Rate limited, backing off for {backoff_time:.2f} seconds (attempt {attempt + 1}/{self.max_retries + 1})"
+                        )
+                        time.sleep(backoff_time)
+
+                        # Rotate user agent for next attempt
+                        self.session.headers.update(
+                            {"User-Agent": random.choice(USER_AGENTS)}
+                        )
+                        continue
+                    else:
+                        logger.error(f"Max retries exceeded due to rate limiting")
+                        raise
+                else:
+                    # Non-rate limiting error, re-raise immediately
+                    raise
+
+        return None
 
     def fetch_daily_data(self, symbol, start_date=None, end_date=None, period=None):
         """
-        Fetch daily OHLCV data for a symbol from Yahoo Finance.
+        Fetch daily OHLCV data for a symbol from Yahoo Finance with rate limiting protection.
 
         Args:
             symbol (str): The ticker symbol to fetch data for
@@ -34,22 +142,33 @@ class YahooFinanceCollector:
         Returns:
             pandas.DataFrame: DataFrame with the OHLCV data
         """
-        try:
+
+        def _fetch_data():
             logger.info(f"Fetching data for {symbol} from {self.source_name}")
 
             if not end_date:
-                end_date = datetime.now()
+                end_date_val = datetime.now()
+            else:
+                end_date_val = end_date
 
             if not start_date and not period:
                 # Default to 5 years of data if no start_date or period provided
-                start_date = end_date - timedelta(days=5 * 365)
+                start_date_val = end_date_val - timedelta(days=5 * 365)
+            else:
+                start_date_val = start_date
+
+            # Create ticker with our configured session
+            ticker = yf.Ticker(symbol, session=self.session)
 
             # Fetch data
             if period:
-                data = yf.download(symbol, period=period, progress=False)
+                data = ticker.history(period=period, progress=False, auto_adjust=True)
             else:
-                data = yf.download(
-                    symbol, start=start_date, end=end_date, progress=False
+                data = ticker.history(
+                    start=start_date_val,
+                    end=end_date_val,
+                    progress=False,
+                    auto_adjust=True,
                 )
 
             if data.empty:
@@ -89,6 +208,8 @@ class YahooFinanceCollector:
             logger.info(f"Successfully fetched {len(data)} rows for {symbol}")
             return data
 
+        try:
+            return self._retry_with_backoff(_fetch_data)
         except Exception as e:
             logger.error(f"Error fetching data for {symbol}: {str(e)}")
             return None

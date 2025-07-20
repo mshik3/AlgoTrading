@@ -1,0 +1,16 @@
+# Development dependencies
+-r requirements.txt
+
+# Testing framework
+pytest==8.3.3
+pytest-cov==6.0.0
+pytest-mock==3.14.0
+
+# Type checking and code quality
+mypy==1.13.0
+black==24.10.0
+flake8==7.1.1
+isort==5.13.2
+
+# Development utilities
+ipython==8.30.0 

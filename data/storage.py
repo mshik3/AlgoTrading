@@ -4,6 +4,7 @@ Handles all database operations using SQLAlchemy ORM.
 """
 
 import os
+import time
 from datetime import datetime
 from sqlalchemy import (
     create_engine,
@@ -20,13 +21,35 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, OperationalError
 from sqlalchemy.pool import QueuePool
 import logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import custom exceptions
+try:
+    from utils.exceptions import (
+        DatabaseException,
+        log_exception,
+        safe_database_operation,
+    )
+except ImportError:
+    # Fallback if utils module is not available
+    logger.warning("Could not import custom exceptions, using basic error handling")
+    DatabaseException = SQLAlchemyError
+
+    def log_exception(logger, exception, context=None):
+        logger.error(f"{context}: {exception}" if context else str(exception))
+
+    def safe_database_operation(logger, operation_name):
+        def decorator(func):
+            return func
+
+        return decorator
+
 
 # Create declarative base
 Base = declarative_base()
@@ -94,25 +117,85 @@ class DataCollectionLog(Base):
 
 
 # Database connection functions
-def get_engine(db_uri=None):
-    """Create and return a database engine with connection pooling."""
+def get_engine(db_uri=None, max_retries=3, retry_delay=5):
+    """
+    Create and return a database engine with connection pooling and retry logic.
+
+    Args:
+        db_uri: Database connection URI (if None, loaded from config)
+        max_retries: Maximum number of connection attempts
+        retry_delay: Delay between retry attempts in seconds
+
+    Returns:
+        SQLAlchemy engine
+
+    Raises:
+        DatabaseException: If connection fails after all retries
+    """
     if db_uri is None:
-        # Default to environment variable or local PostgreSQL
-        db_uri = os.environ.get(
-            "DB_URI", "postgresql://mustafashikora:@localhost:5432/algotrading"
-        )
+        # Use the secure environment configuration system
+        try:
+            from utils.config import get_database_url
 
-    # Create engine with connection pooling
-    engine = create_engine(
-        db_uri,
-        poolclass=QueuePool,
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=1800,
+            db_uri = get_database_url()
+        except ImportError:
+            logger.error("Failed to import configuration module")
+            raise
+        except ValueError as e:
+            logger.error(f"Database configuration error: {e}")
+            raise
+
+    # Attempt to create engine with retries
+    last_exception = None
+    for attempt in range(max_retries + 1):
+        try:
+            # Create engine with connection pooling
+            engine = create_engine(
+                db_uri,
+                poolclass=QueuePool,
+                pool_size=5,
+                max_overflow=10,
+                pool_timeout=30,
+                pool_recycle=1800,
+                # Add connection test on connect
+                pool_pre_ping=True,
+            )
+
+            # Test the connection
+            with engine.connect() as conn:
+                conn.execute("SELECT 1")
+
+            if attempt > 0:
+                logger.info(f"Database connection successful on attempt {attempt + 1}")
+            return engine
+
+        except (SQLAlchemyError, OperationalError) as e:
+            last_exception = e
+            if attempt < max_retries:
+                logger.warning(
+                    f"Database connection attempt {attempt + 1} failed: {str(e)}"
+                )
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                logger.error(
+                    f"Database connection failed after {max_retries + 1} attempts"
+                )
+
+    # If we get here, all attempts failed
+    error_message = f"Failed to connect to database after {max_retries + 1} attempts. Last error: {str(last_exception)}"
+    logger.error(error_message)
+    logger.error("Please check:")
+    logger.error("1. Database server is running")
+    logger.error("2. Connection credentials are correct")
+    logger.error("3. Network connectivity to database host")
+    logger.error("4. Database exists and user has access")
+
+    raise DatabaseException(
+        error_message,
+        operation="database_connection",
+        details={"attempts": max_retries + 1, "last_error": str(last_exception)},
     )
-
-    return engine
 
 
 def init_db(engine=None):
@@ -130,19 +213,73 @@ def init_db(engine=None):
         return False
 
 
-def get_session(engine=None):
-    """Create and return a new database session."""
-    if engine is None:
-        engine = get_engine()
+def get_session(engine=None, max_retries=3):
+    """
+    Create and return a new database session with proper error handling and retry logic.
 
-    Session = sessionmaker(bind=engine)
-    return Session()
+    Args:
+        engine: SQLAlchemy engine (if None, creates new engine)
+        max_retries: Maximum number of session creation attempts
+
+    Returns:
+        SQLAlchemy session
+
+    Raises:
+        DatabaseException: If session creation fails after all retries
+    """
+    last_exception = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            if engine is None:
+                engine = get_engine()
+
+            Session = sessionmaker(bind=engine)
+            session = Session()
+
+            # Test the session with a simple query
+            session.execute("SELECT 1")
+
+            if attempt > 0:
+                logger.info(
+                    f"Database session created successfully on attempt {attempt + 1}"
+                )
+            return session
+
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries:
+                logger.warning(
+                    f"Session creation attempt {attempt + 1} failed: {str(e)}"
+                )
+                logger.info("Retrying session creation...")
+                # Reset engine to None to force reconnection
+                engine = None
+            else:
+                logger.error(
+                    f"Session creation failed after {max_retries + 1} attempts"
+                )
+
+    # If we get here, all attempts failed
+    log_exception(
+        logger, last_exception, "Failed to create database session after retries"
+    )
+    raise DatabaseException(
+        f"Could not establish database session after {max_retries + 1} attempts",
+        operation="create_session",
+        details={
+            "attempts": max_retries + 1,
+            "last_error": str(last_exception),
+            "engine": str(engine) if engine else None,
+        },
+    )
 
 
 # Basic CRUD operations for market data
+@safe_database_operation(logger, "save_market_data")
 def save_market_data(session, data_list):
     """
-    Save a list of market data records to the database.
+    Save a list of market data records to the database with improved error handling.
     Uses the 'upsert' pattern to insert or update records.
 
     Args:
@@ -151,12 +288,33 @@ def save_market_data(session, data_list):
 
     Returns:
         tuple: (new_records, updated_records)
+
+    Raises:
+        DatabaseException: If database operation fails
+        ValueError: If data validation fails
     """
+    if not data_list:
+        logger.warning("Empty data_list provided to save_market_data")
+        return 0, 0
+
+    if session is None:
+        raise ValueError("Database session cannot be None")
+
     new_records = 0
     updated_records = 0
+    processed_records = 0
 
     try:
+        logger.debug(f"Starting to save {len(data_list)} market data records")
+
         for data in data_list:
+            # Validate data object
+            if not isinstance(data, MarketData):
+                raise ValueError(f"Expected MarketData object, got {type(data)}")
+
+            if not data.symbol or not data.date:
+                raise ValueError("MarketData must have symbol and date")
+
             # Check if record exists
             existing = (
                 session.query(MarketData)
@@ -178,12 +336,29 @@ def save_market_data(session, data_list):
                 session.add(data)
                 new_records += 1
 
+            processed_records += 1
+
+            # Periodic commit for large datasets
+            if processed_records % 100 == 0:
+                session.commit()
+                logger.debug(
+                    f"Committed batch: {processed_records}/{len(data_list)} records processed"
+                )
+
+        # Final commit
         session.commit()
+        logger.info(
+            f"Successfully saved market data: {new_records} new, {updated_records} updated"
+        )
         return new_records, updated_records
 
-    except SQLAlchemyError as e:
-        session.rollback()
-        logger.error(f"Error saving market data: {str(e)}")
+    except ValueError as e:
+        # Data validation errors - don't rollback, just re-raise
+        logger.error(f"Data validation error: {e}")
+        raise
+
+    except Exception as e:
+        # All other exceptions are handled by the decorator
         raise
 
 

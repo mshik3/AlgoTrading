@@ -6,6 +6,7 @@ Coordinates the data collection, strategy execution, and trade generation.
 import os
 import logging
 import argparse
+import time
 from datetime import datetime, timedelta
 
 from data import (
@@ -20,6 +21,27 @@ from data import (
     log_collection_start,
     log_collection_end,
 )
+
+# Import validation utilities
+try:
+    from utils.validators import validate_symbols, validate_period
+    from utils.config import load_environment, validate_required_env_vars
+except ImportError as e:
+    logger.warning(f"Could not import utilities: {e}")
+
+    # Provide fallback functions
+    def validate_symbols(symbols):
+        return symbols if symbols else []
+
+    def validate_period(period):
+        return period
+
+    def load_environment():
+        return True
+
+    def validate_required_env_vars():
+        return {"valid": True}
+
 
 # Set up logging
 logging.basicConfig(
@@ -178,7 +200,7 @@ def initialize_symbols(session, symbols=None):
 
 def collect_market_data(session, symbol, period="5y", force_update=False):
     """
-    Collect market data for a symbol.
+    Collect market data for a symbol with enhanced error handling.
 
     Args:
         session: SQLAlchemy session
@@ -187,31 +209,43 @@ def collect_market_data(session, symbol, period="5y", force_update=False):
         force_update: Whether to force update existing data
 
     Returns:
-        tuple: (new_records, updated_records)
+        tuple: (new_records, updated_records, error_occurred)
     """
-    # Get collector and processor
+    # Get collector and processor with rate limiting protection
     collector = get_collector("yahoo")
     processor = DataProcessor()
 
-    # Fetch data
-    market_data = collector.collect_and_transform(symbol, period=period)
+    try:
+        # Fetch data with built-in rate limiting protection
+        market_data = collector.collect_and_transform(symbol, period=period)
 
-    if not market_data:
-        logger.warning(f"No data collected for {symbol}")
-        return 0, 0
+        if not market_data:
+            logger.warning(f"No data collected for {symbol}")
+            return 0, 0, False
 
-    # Save data
-    new_records, updated_records = save_market_data(session, market_data)
-    logger.info(
-        f"Collected data for {symbol}: {new_records} new, {updated_records} updated"
-    )
+        # Save data
+        new_records, updated_records = save_market_data(session, market_data)
+        logger.info(
+            f"Collected data for {symbol}: {new_records} new, {updated_records} updated"
+        )
 
-    return new_records, updated_records
+        return new_records, updated_records, False
+
+    except Exception as e:
+        error_msg = str(e)
+        if (
+            "rate limit" in error_msg.lower()
+            or "too many requests" in error_msg.lower()
+        ):
+            logger.error(f"Rate limiting encountered for {symbol}: {error_msg}")
+        else:
+            logger.error(f"Unexpected error collecting data for {symbol}: {error_msg}")
+        return 0, 0, True
 
 
 def run_data_collection(engine=None, symbols=None, period="5y", force_update=False):
     """
-    Run the data collection process for all symbols.
+    Run the data collection process for all symbols with enhanced error handling.
 
     Args:
         engine: SQLAlchemy engine
@@ -244,21 +278,54 @@ def run_data_collection(engine=None, symbols=None, period="5y", force_update=Fal
     log_entry = log_collection_start(session)
     log_id = log_entry.id
 
-    # Collect data for each symbol
+    # Collect data for each symbol with progressive delays on errors
     total_new = 0
     total_updated = 0
     errors = 0
+    consecutive_errors = 0
+    max_consecutive_errors = 3
+    base_delay = 2
 
-    for symbol in symbols:
+    for i, symbol in enumerate(symbols):
         try:
-            new_records, updated_records = collect_market_data(
+            # Add progressive delay if we've had consecutive errors
+            if consecutive_errors > 0:
+                delay = base_delay * (2**consecutive_errors)
+                logger.info(
+                    f"Adding {delay}s delay due to {consecutive_errors} consecutive errors"
+                )
+                time.sleep(delay)
+
+            new_records, updated_records, error_occurred = collect_market_data(
                 session, symbol, period, force_update
             )
-            total_new += new_records
-            total_updated += updated_records
+
+            if error_occurred:
+                errors += 1
+                consecutive_errors += 1
+
+                # If we've had too many consecutive errors, pause longer
+                if consecutive_errors >= max_consecutive_errors:
+                    long_delay = 30 + (consecutive_errors * 10)
+                    logger.warning(
+                        f"Too many consecutive errors ({consecutive_errors}), pausing for {long_delay}s"
+                    )
+                    time.sleep(long_delay)
+            else:
+                total_new += new_records
+                total_updated += updated_records
+                consecutive_errors = 0  # Reset consecutive error count on success
+
         except Exception as e:
-            logger.error(f"Error collecting data for {symbol}: {str(e)}")
+            logger.error(f"Unexpected error processing {symbol}: {str(e)}")
             errors += 1
+            consecutive_errors += 1
+
+        # Log progress every 5 symbols
+        if (i + 1) % 5 == 0:
+            logger.info(
+                f"Progress: {i + 1}/{len(symbols)} symbols processed, {errors} errors so far"
+            )
 
     # Log collection end
     log_collection_end(
@@ -277,11 +344,25 @@ def run_data_collection(engine=None, symbols=None, period="5y", force_update=Fal
         f"{errors} errors"
     )
 
-    return errors == 0
+    # Consider it successful if we got some data and errors were less than 50%
+    success_rate = (len(symbols) - errors) / len(symbols) if len(symbols) > 0 else 0
+    return success_rate >= 0.5
 
 
 def main():
-    """Main entry point for the pipeline."""
+    """Main entry point for the pipeline with input validation."""
+    # Load environment configuration first
+    load_environment()
+
+    # Validate environment setup
+    env_validation = validate_required_env_vars()
+    if not env_validation["valid"]:
+        logger.error(
+            f"Environment validation failed. Missing required variables: {env_validation['missing_required']}"
+        )
+        logger.error("Please check your .env file or system environment variables")
+        return 1
+
     parser = argparse.ArgumentParser(description="Algorithmic Trading Pipeline")
     parser.add_argument(
         "--task",
@@ -289,21 +370,53 @@ def main():
         default="collect",
         help="Task to perform",
     )
-    parser.add_argument("--symbols", nargs="+", help="Symbols to process")
-    parser.add_argument("--period", default="5y", help="Data period to collect")
+    parser.add_argument(
+        "--symbols", nargs="+", help="Symbols to process (e.g. AAPL MSFT)"
+    )
+    parser.add_argument(
+        "--period", default="5y", help="Data period to collect (e.g. 5y, 1y, 6mo)"
+    )
     parser.add_argument(
         "--force", action="store_true", help="Force update existing data"
     )
 
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
 
-    if args.task == "collect":
-        success = run_data_collection(
-            symbols=args.symbols, period=args.period, force_update=args.force
-        )
-        return 0 if success else 1
-    else:
-        logger.error(f"Task '{args.task}' not implemented yet")
+        # Validate inputs
+        validated_symbols = None
+        if args.symbols:
+            try:
+                validated_symbols = validate_symbols(args.symbols)
+                logger.info(f"Validated symbols: {validated_symbols}")
+            except ValueError as e:
+                logger.error(f"Invalid symbols provided: {e}")
+                return 1
+
+        try:
+            validated_period = validate_period(args.period)
+            logger.info(f"Using period: {validated_period}")
+        except ValueError as e:
+            logger.error(f"Invalid period provided: {e}")
+            return 1
+
+        # Execute the requested task
+        if args.task == "collect":
+            success = run_data_collection(
+                symbols=validated_symbols,
+                period=validated_period,
+                force_update=args.force,
+            )
+            return 0 if success else 1
+        else:
+            logger.error(f"Task '{args.task}' not implemented yet")
+            return 1
+
+    except KeyboardInterrupt:
+        logger.info("Pipeline interrupted by user")
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error in main pipeline: {e}")
         return 1
 
 
