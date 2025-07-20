@@ -8,6 +8,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyo
+*.pyd
+*.pyx
+*.pyi
+*.pyc
+*.pyo
+*.pyd
+*.pyx
+*.pyi
+
+# Python optimization artifacts
+*.opt-1.pyc
+*.opt-2.pyc
+*.pyc.opt-1
+*.pyc.opt-2
 
 # Distribution / packaging
 .Python
@@ -35,6 +50,8 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
+.ENV/
 
 # IDE and editor files
 .vscode/
@@ -85,4 +102,17 @@ reports/output/
 # Personal trading data
 trading_logs/
 backtest_results/
-performance_reports/ 
+performance_reports/
+
+# Additional Python artifacts
+*.pyc~
+*.pyc.bak
+*.pyc.old
+*.pyc.new
+*.pyc.tmp
+*.pyc.temp
+*.pyc.swp
+*.pyc.swo
+*.pyc.swn
+*.pyc.sublime-workspace
+*.pyc.sublime-project 
