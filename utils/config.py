@@ -106,7 +106,7 @@ def get_database_url() -> str:
     Construct database URL from environment variables with proper escaping.
 
     Returns:
-        PostgreSQL connection URL
+        Database connection URL (PostgreSQL or SQLite)
 
     Raises:
         ValueError: If required database variables are missing
@@ -117,7 +117,15 @@ def get_database_url() -> str:
         logger.debug("Using full DB_URI connection string")
         return db_uri
 
-    # Otherwise construct from individual components
+    # Check if we're using SQLite
+    db_type = get_env_var("DB_TYPE", "postgresql").lower()
+    if db_type == "sqlite":
+        db_path = get_env_var("DB_PATH", "/path/to/database.db")
+        connection_url = f"sqlite:///{db_path}"
+        logger.debug(f"Constructed SQLite database URL: {db_path}")
+        return connection_url
+
+    # Otherwise construct PostgreSQL URL from individual components
     try:
         host = get_env_var("DB_HOST", "localhost", required=True)
         port = get_env_var("DB_PORT", "5432")
@@ -135,14 +143,16 @@ def get_database_url() -> str:
         connection_url = f"postgresql://{user_part}@{host}:{port}/{database}"
         logger.debug(f"Constructed database URL for host: {host}, database: {database}")
         return connection_url
-        
+
     except ValueError as e:
-        logger.error("Database configuration error. Please check your environment variables.")
+        logger.error(
+            "Database configuration error. Please check your environment variables."
+        )
         logger.error("Required variables: DB_HOST, DB_NAME, DB_USER")
         logger.error("Optional variables: DB_PASSWORD, DB_PORT")
         logger.error("Alternative: Set DB_URI with full connection string")
         logger.error("Example: copy env.example to .env and update with your values")
-        raise ValueError(f"Database configuration incomplete: {str(e)}")  
+        raise ValueError(f"Database configuration incomplete: {str(e)}")
 
 
 def validate_required_env_vars() -> Dict[str, Any]:
@@ -154,7 +164,7 @@ def validate_required_env_vars() -> Dict[str, Any]:
     """
     # Check if DB_URI is provided as alternative to individual DB vars
     db_uri_provided = get_env_var("DB_URI") is not None
-    
+
     if db_uri_provided:
         required_vars = []  # DB_URI covers all database requirements
         logger.debug("Using DB_URI for database configuration")
@@ -163,7 +173,7 @@ def validate_required_env_vars() -> Dict[str, Any]:
 
     optional_vars = [
         "DB_PASSWORD",
-        "DB_PORT", 
+        "DB_PORT",
         "DB_URI",
         "ALPACA_API_KEY",
         "ALPACA_SECRET_KEY",
@@ -177,12 +187,13 @@ def validate_required_env_vars() -> Dict[str, Any]:
         "missing_required": [],
         "missing_optional": [],
         "present": [],
-        "setup_instructions": []
+        "setup_instructions": [],
     }
 
     # Check required variables
     for var in required_vars:
-        if get_env_var(var) is None:
+        value = get_env_var(var)
+        if value is None or value.strip() == "":
             results["missing_required"].append(var)
             results["valid"] = False
         else:
@@ -190,7 +201,8 @@ def validate_required_env_vars() -> Dict[str, Any]:
 
     # Check optional variables
     for var in optional_vars:
-        if get_env_var(var) is None:
+        value = get_env_var(var)
+        if value is None or value.strip() == "":
             results["missing_optional"].append(var)
         else:
             results["present"].append(var)
@@ -202,9 +214,9 @@ def validate_required_env_vars() -> Dict[str, Any]:
             "2. Edit .env file with your database credentials",
             "3. Required: DB_HOST, DB_NAME, DB_USER",
             "4. Optional: DB_PASSWORD, ALPACA_API_KEY, etc.",
-            "5. Alternative: Set DB_URI with full connection string"
+            "5. Alternative: Set DB_URI with full connection string",
         ]
-        
+
         logger.error("Missing required environment variables!")
         logger.error(f"Missing: {', '.join(results['missing_required'])}")
         for instruction in results["setup_instructions"]:
@@ -225,6 +237,26 @@ def get_log_config() -> Dict[str, Any]:
         "format": get_env_var(
             "LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         ),
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": get_env_var("LOG_LEVEL", "INFO").upper(),
+                "formatter": "default",
+            },
+            "file": {
+                "class": "logging.FileHandler",
+                "filename": "algotrading.log",
+                "level": get_env_var("LOG_LEVEL", "INFO").upper(),
+                "formatter": "default",
+            },
+        },
+        "formatters": {
+            "default": {
+                "format": get_env_var(
+                    "LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                )
+            }
+        },
     }
 
 
@@ -236,11 +268,13 @@ def get_api_config() -> Dict[str, Any]:
         Dictionary with API configuration
     """
     return {
-        "alpaca_api_key": get_env_var("ALPACA_API_KEY"),
-        "alpaca_secret_key": get_env_var("ALPACA_SECRET_KEY"),
-        "alpaca_base_url": get_env_var(
-            "ALPACA_BASE_URL", "https://paper-api.alpaca.markets"
-        ),
+        "alpaca": {
+            "api_key": get_env_var("ALPACA_API_KEY"),
+            "secret_key": get_env_var("ALPACA_SECRET_KEY"),
+            "base_url": get_env_var(
+                "ALPACA_BASE_URL", "https://paper-api.alpaca.markets"
+            ),
+        },
         "alpha_vantage_key": get_env_var("ALPHA_VANTAGE_API_KEY"),
         "yahoo_min_delay": int(get_env_var("YAHOO_MIN_DELAY", "1")),
         "yahoo_max_delay": int(get_env_var("YAHOO_MAX_DELAY", "3")),

@@ -44,9 +44,31 @@ class GoldenCrossStrategy(BaseStrategy):
             symbols: List of symbols to trade (defaults to broad market ETFs)
             **config: Strategy configuration parameters
         """
-        # Default to broad market ETFs if no symbols provided
+        # Default to comprehensive 50-asset universe if no symbols provided
         if symbols is None:
-            symbols = ["SPY", "QQQ", "VTI"]  # Reliable broad market ETFs
+            symbols = [
+                # Major US ETFs (8)
+                "SPY", "QQQ", "VTI", "IWM", "VEA", "VWO", "AGG", "TLT",
+                
+                # Sector ETFs (8)
+                "XLF", "XLK", "XLV", "XLE", "XLI", "XLP", "XLU", "XLB",
+                
+                # Major Tech Stocks (8)
+                "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "NFLX",
+                
+                # Financial & Industrial (6)
+                "JPM", "BAC", "WFC", "GS", "UNH", "JNJ",
+                
+                # International ETFs (6)
+                "EFA", "EEM", "FXI", "EWJ", "EWG", "EWU",
+                
+                # Commodity ETFs (4)
+                "GLD", "SLV", "USO", "DBA",
+                
+                # Crypto (10)
+                "BTCUSD", "ETHUSD", "ADAUSD", "DOTUSD", "LINKUSD", 
+                "LTCUSD", "BCHUSD", "XRPUSD", "SOLUSD", "MATICUSD"
+            ]  # 50 diverse assets across stocks, ETFs, crypto, commodities
 
         # Default configuration for Golden Cross
         default_config = {
@@ -112,6 +134,26 @@ class GoldenCrossStrategy(BaseStrategy):
                 continue
 
         return signals
+
+    @property
+    def fast_ma_period(self):
+        """Get fast moving average period."""
+        return self.config["fast_ma_period"]
+
+    @property
+    def slow_ma_period(self):
+        """Get slow moving average period."""
+        return self.config["slow_ma_period"]
+
+    @property
+    def min_trend_strength(self):
+        """Get minimum trend strength threshold."""
+        return self.config["min_trend_strength"]
+
+    @property
+    def max_position_size(self):
+        """Get maximum position size."""
+        return self.config["max_position_size"]
 
     def should_enter_position(
         self, symbol: str, data: pd.DataFrame
@@ -440,6 +482,14 @@ class GoldenCrossStrategy(BaseStrategy):
     def get_strategy_summary(self) -> Dict:
         """Get strategy-specific summary information."""
         summary = self.get_performance_summary()
+
+        # Add required fields for test compatibility
+        summary.update({
+            "name": self.name,
+            "symbols": self.symbols,
+            "fast_ma_period": self.fast_ma_period,
+            "slow_ma_period": self.slow_ma_period,
+        })
 
         # Add Golden Cross specific metrics
         buy_signals = [

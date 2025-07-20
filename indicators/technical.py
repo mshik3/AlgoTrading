@@ -6,7 +6,7 @@ Provides optimized pandas-based implementations of common technical indicators.
 import numpy as np
 import pandas as pd
 import logging
-from typing import Tuple, Optional, Union
+from typing import Tuple, Optional, Union, Dict, Any
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -47,6 +47,8 @@ def calculate_ema(
 
 
 def calculate_rsi(data: pd.Series, window: int = 14) -> pd.Series:
+    if window <= 0:
+        raise ValueError("Window must be positive for RSI calculation.")
     """
     Calculate Relative Strength Index (RSI).
 
@@ -71,6 +73,7 @@ def calculate_rsi(data: pd.Series, window: int = 14) -> pd.Series:
     # Calculate RS and RSI
     rs = avg_gains / avg_losses
     rsi = 100 - (100 / (1 + rs))
+    rsi.iloc[:window] = np.nan  # Ensure first `window` values are NaN
 
     return rsi
 
@@ -110,29 +113,12 @@ def calculate_macd(
 
 def calculate_bollinger_bands(
     data: pd.Series, window: int = 20, num_std: float = 2
-) -> pd.DataFrame:
-    """
-    Calculate Bollinger Bands.
-
-    Args:
-        data: Price series (typically close prices)
-        window: Number of periods for the moving average
-        num_std: Number of standard deviations for the bands
-
-    Returns:
-        DataFrame with columns: middle, upper, lower
-    """
-    # Calculate middle band (SMA)
+) -> tuple:
     middle = calculate_sma(data, window)
-
-    # Calculate standard deviation
     std = data.rolling(window=window).std()
-
-    # Calculate upper and lower bands
     upper = middle + (std * num_std)
     lower = middle - (std * num_std)
-
-    return pd.DataFrame({"middle": middle, "upper": upper, "lower": lower})
+    return upper, lower, middle
 
 
 def calculate_stochastic(
@@ -286,13 +272,15 @@ class TechnicalIndicators:
         return self
 
     def add_bollinger_bands(
-        self, period: int = 20, std: float = 2, column: str = "Close"
+        self, period: int = 20, std_dev: float = 2, column: str = "Close"
     ) -> "TechnicalIndicators":
         """Add Bollinger Bands to the data."""
-        bb_data = calculate_bollinger_bands(self.data[column], period, std)
-        self.data[f"BB_Middle_{period}"] = bb_data["middle"]
-        self.data[f"BB_Upper_{period}"] = bb_data["upper"]
-        self.data[f"BB_Lower_{period}"] = bb_data["lower"]
+        bb_upper, bb_lower, bb_middle = calculate_bollinger_bands(
+            self.data[column], period, std_dev
+        )
+        self.data[f"BB_Upper_{period}"] = bb_upper
+        self.data[f"BB_Lower_{period}"] = bb_lower
+        self.data[f"BB_Middle_{period}"] = bb_middle
         return self
 
     def add_stochastic(
@@ -456,3 +444,47 @@ class TechnicalIndicators:
 
         # Check if fast MA crossed below slow MA
         return (prev_fast >= prev_slow) and (current_fast < current_slow)
+
+    def get_signals(self) -> Dict[str, Any]:
+        """
+        Get trading signals based on technical indicators.
+
+        Returns:
+            Dictionary with signal information
+        """
+        signals = {}
+
+        if len(self.data) < 2:
+            return signals
+
+        latest = self.get_latest_values()
+
+        # RSI signals
+        if "RSI_14" in latest and pd.notna(latest["RSI_14"]):
+            rsi = latest["RSI_14"]
+            if rsi < 30:
+                signals["rsi_oversold"] = True
+            elif rsi > 70:
+                signals["rsi_overbought"] = True
+
+        # MACD signals
+        if "MACD_12_26_9" in latest and "MACD_Signal_12_26_9" in latest:
+            macd = latest["MACD_12_26_9"]
+            signal = latest["MACD_Signal_12_26_9"]
+            if pd.notna(macd) and pd.notna(signal):
+                if macd > signal:
+                    signals["macd_bullish"] = True
+                else:
+                    signals["macd_bearish"] = True
+
+        # Moving average signals
+        if "SMA_50" in latest and "SMA_200" in latest:
+            sma_50 = latest["SMA_50"]
+            sma_200 = latest["SMA_200"]
+            if pd.notna(sma_50) and pd.notna(sma_200):
+                if sma_50 > sma_200:
+                    signals["ma_bullish"] = True
+                else:
+                    signals["ma_bearish"] = True
+
+        return signals

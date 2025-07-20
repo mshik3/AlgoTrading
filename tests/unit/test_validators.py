@@ -45,7 +45,16 @@ class TestValidateSymbols:
         assert result == ["AAPL"]
 
     def test_too_many_symbols(self):
-        many_symbols = [f"SYM{i:02d}" for i in range(51)]
+        # Create 51 unique valid symbols using only letters
+        many_symbols = []
+        for i in range(51):
+            # Create unique 3-letter symbols
+            first = chr(65 + (i // 26))  # A-Z for first letter
+            second = chr(65 + (i % 26))  # A-Z for second letter
+            third = chr(65 + ((i + 1) % 26))  # A-Z for third letter
+            symbol = first + second + third
+            many_symbols.append(symbol)
+
         with pytest.raises(ValueError, match="Too many symbols"):
             validate_symbols(many_symbols)
 

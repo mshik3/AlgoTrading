@@ -101,6 +101,11 @@ class PaperTradingSimulator:
         Returns:
             True if order was placed successfully, False otherwise
         """
+        # Check for None signal
+        if signal is None:
+            logger.error("Cannot execute None signal")
+            return False
+            
         try:
             # Get current market price
             current_price = self._get_current_price(signal.symbol)
@@ -126,7 +131,7 @@ class PaperTradingSimulator:
         symbol = signal.symbol
 
         # Calculate position size
-        if signal.quantity:
+        if signal.quantity and signal.quantity > 0:
             quantity = signal.quantity
         else:
             # Default position sizing (30% of available cash for ETFs)
@@ -196,6 +201,9 @@ class PaperTradingSimulator:
         self.completed_trades.append(trade)
         self.trade_counter += 1
 
+        # Track daily portfolio value
+        self._track_daily_portfolio_value()
+
         logger.info(
             f"PAPER BUY: {quantity} {symbol} @ ${fill_price:.2f} "
             f"(cost: ${actual_cost:.2f})"
@@ -259,6 +267,9 @@ class PaperTradingSimulator:
         # Record trade
         self.completed_trades.append(trade)
         self.trade_counter += 1
+
+        # Track daily portfolio value
+        self._track_daily_portfolio_value()
 
         logger.info(
             f"PAPER SELL: {quantity_to_sell} {symbol} @ ${fill_price:.2f} "
@@ -413,6 +424,23 @@ class PaperTradingSimulator:
                 )
 
         return "\n".join(report)
+
+    def _track_daily_portfolio_value(self):
+        """Track daily portfolio value for performance analysis."""
+        try:
+            current_value = self.get_portfolio_value()
+            today = datetime.now().date()
+            
+            # Only add if we don't already have a value for today
+            if not self.daily_portfolio_values or self.daily_portfolio_values[-1]['date'] != today:
+                self.daily_portfolio_values.append({
+                    'date': today,
+                    'value': current_value,
+                    'cash': self.current_cash,
+                    'positions_value': current_value - self.current_cash
+                })
+        except Exception as e:
+            logger.warning(f"Error tracking daily portfolio value: {str(e)}")
 
     def reset(self):
         """Reset the paper trading simulator."""

@@ -64,20 +64,22 @@ class MarketData(Base):
     id = Column(Integer, primary_key=True)
     symbol = Column(String(10), nullable=False)
     date = Column(Date, nullable=False)
-    open = Column(Numeric(10, 2), nullable=False)
-    high = Column(Numeric(10, 2), nullable=False)
-    low = Column(Numeric(10, 2), nullable=False)
-    close = Column(Numeric(10, 2), nullable=False)
+    open_price = Column(Numeric(10, 2), nullable=False)
+    high_price = Column(Numeric(10, 2), nullable=False)
+    low_price = Column(Numeric(10, 2), nullable=False)
+    close_price = Column(Numeric(10, 2), nullable=False)
     volume = Column(Integer, nullable=False)
-    adjusted_close = Column(Numeric(10, 2), nullable=False)
+    adj_close = Column(Numeric(10, 2), nullable=False)
 
-    # Define unique constraint
+    # Define unique constraint and additional indexes for performance
     __table_args__ = (
         Index("idx_market_data_symbol_date", "symbol", "date", unique=True),
+        Index("idx_market_data_symbol", "symbol"),
+        Index("idx_market_data_date", "date"),
     )
 
     def __repr__(self):
-        return f"<MarketData(symbol='{self.symbol}', date='{self.date}', close={self.close})>"
+        return f"<MarketData(symbol='{self.symbol}', date='{self.date}', close={self.close_price})>"
 
 
 class Symbol(Base):
@@ -90,7 +92,7 @@ class Symbol(Base):
     name = Column(String(100))
     asset_type = Column(String(20), nullable=False)  # stock, etf, etc.
     sector = Column(String(50))
-    active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
     added_date = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
@@ -103,17 +105,15 @@ class DataCollectionLog(Base):
     __tablename__ = "data_collection_log"
 
     id = Column(Integer, primary_key=True)
-    start_time = Column(DateTime, nullable=False, default=datetime.utcnow)
-    end_time = Column(DateTime)
-    symbols_processed = Column(Integer)
-    new_records_added = Column(Integer)
-    records_updated = Column(Integer)
-    errors = Column(Integer, default=0)
+    symbol = Column(String(10), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date)
+    records_collected = Column(Integer)
     status = Column(String(20), default="running")
     error_message = Column(Text)
 
     def __repr__(self):
-        return f"<DataCollectionLog(id={self.id}, status='{self.status}', symbols_processed={self.symbols_processed})>"
+        return f"<DataCollectionLog(symbol='{self.symbol}', status='{self.status}', records_collected={self.records_collected})>"
 
 
 # Database connection functions
@@ -203,7 +203,11 @@ def get_engine(db_uri=None, max_retries=3, retry_delay=5):
 def init_db(engine=None):
     """Initialize the database, creating tables if they don't exist."""
     if engine is None:
-        engine = get_engine()
+        try:
+            engine = get_engine()
+        except Exception as e:
+            logger.error(f"Failed to get engine: {str(e)}")
+            return False
 
     try:
         # Create all tables
@@ -283,26 +287,34 @@ def get_session(engine=None, max_retries=3):
 @safe_database_operation(logger, "save_market_data")
 def save_market_data(session, data_list):
     """
-    Save a list of market data records to the database with improved error handling.
+    Save market data records to the database with improved error handling.
     Uses the 'upsert' pattern to insert or update records.
+    Handles both single MarketData objects and lists of MarketData objects.
 
     Args:
         session: SQLAlchemy session
-        data_list: List of MarketData objects
+        data_list: MarketData object or list of MarketData objects
 
     Returns:
-        tuple: (new_records, updated_records)
+        tuple: (new_records, updated_records) or bool for single objects
 
     Raises:
         DatabaseException: If database operation fails
         ValueError: If data validation fails
     """
-    if not data_list:
-        logger.warning("Empty data_list provided to save_market_data")
-        return 0, 0
-
     if session is None:
         raise ValueError("Database session cannot be None")
+
+    # Handle single object vs list
+    if isinstance(data_list, MarketData):
+        data_list = [data_list]
+        return_single = True
+    else:
+        return_single = False
+
+    if not data_list:
+        logger.warning("Empty data_list provided to save_market_data")
+        return (0, 0) if not return_single else False
 
     new_records = 0
     updated_records = 0
@@ -328,12 +340,12 @@ def save_market_data(session, data_list):
 
             if existing:
                 # Update existing record
-                existing.open = data.open
-                existing.high = data.high
-                existing.low = data.low
-                existing.close = data.close
+                existing.open_price = data.open_price
+                existing.high_price = data.high_price
+                existing.low_price = data.low_price
+                existing.close_price = data.close_price
                 existing.volume = data.volume
-                existing.adjusted_close = data.adjusted_close
+                existing.adj_close = data.adj_close
                 updated_records += 1
             else:
                 # Add new record
@@ -343,17 +355,28 @@ def save_market_data(session, data_list):
             processed_records += 1
 
             # Periodic commit for large datasets
-            if processed_records % 100 == 0:
-                session.commit()
-                logger.debug(
-                    f"Committed batch: {processed_records}/{len(data_list)} records processed"
-                )
+        if processed_records % 100 == 0:
+            session.commit()
+            logger.debug(
+                f"Committed batch: {processed_records}/{len(data_list)} records processed"
+            )
+
+        # Optimize for bulk operations
+        if len(data_list) > 1000:
+            # Use bulk operations for large datasets
+            session.bulk_save_objects(data_list, update_changed_only=False)
+            session.commit()
+            logger.info(f"Bulk saved {len(data_list)} records")
+            return len(data_list), 0
 
         # Final commit
         session.commit()
         logger.info(
             f"Successfully saved market data: {new_records} new, {updated_records} updated"
         )
+
+        if return_single:
+            return new_records > 0 or updated_records > 0
         return new_records, updated_records
 
     except ValueError as e:
@@ -401,7 +424,7 @@ def save_symbol(
 
     Args:
         session: SQLAlchemy session
-        symbol: Stock symbol
+        symbol: Stock symbol (string) or Symbol object
         name: Company/asset name
         asset_type: Type of asset (stock, etf, etc.)
         sector: Market sector
@@ -411,25 +434,35 @@ def save_symbol(
         Symbol: The created or updated Symbol object
     """
     try:
+        # Handle both string and Symbol object inputs
+        if isinstance(symbol, Symbol):
+            symbol_str = symbol.symbol
+            name = name or symbol.name
+            asset_type = asset_type or symbol.asset_type
+            sector = sector or symbol.sector
+            active = active if active is not True else symbol.is_active
+        else:
+            symbol_str = symbol
+
         # Check if symbol exists
-        existing = session.query(Symbol).filter(Symbol.symbol == symbol).first()
+        existing = session.query(Symbol).filter(Symbol.symbol == symbol_str).first()
 
         if existing:
             # Update existing symbol
             existing.name = name if name else existing.name
             existing.asset_type = asset_type
             existing.sector = sector if sector else existing.sector
-            existing.active = active
+            existing.is_active = active
             session.commit()
             return existing
         else:
             # Create new symbol
             new_symbol = Symbol(
-                symbol=symbol,
+                symbol=symbol_str,
                 name=name,
                 asset_type=asset_type,
                 sector=sector,
-                active=active,
+                is_active=active,
             )
             session.add(new_symbol)
             session.commit()
@@ -449,34 +482,37 @@ def get_active_symbols(session):
         session: SQLAlchemy session
 
     Returns:
-        list: List of Symbol objects with active=True
+        list: List of Symbol objects with is_active=True
     """
-    return session.query(Symbol).filter(Symbol.active == True).all()
+    return session.query(Symbol).filter(Symbol.is_active == True).all()
 
 
-def log_collection_start(session):
+def log_collection_start(session, symbol, start_date, end_date=None):
     """
     Log the start of a data collection job.
 
     Args:
         session: SQLAlchemy session
+        symbol: Symbol being collected
+        start_date: Start date for collection
+        end_date: End date for collection (optional)
 
     Returns:
-        DataCollectionLog: The created log entry
+        int: The ID of the created log entry
     """
-    log_entry = DataCollectionLog(start_time=datetime.utcnow(), status="running")
+    log_entry = DataCollectionLog(
+        symbol=symbol, start_date=start_date, end_date=end_date, status="running"
+    )
     session.add(log_entry)
     session.commit()
-    return log_entry
+    return log_entry.id
 
 
 def log_collection_end(
     session,
     log_id,
-    symbols_processed,
-    new_records,
-    updated_records,
-    errors=0,
+    records_collected,
+    status="completed",
     error_message=None,
 ):
     """
@@ -485,24 +521,19 @@ def log_collection_end(
     Args:
         session: SQLAlchemy session
         log_id: ID of the log entry to update
-        symbols_processed: Number of symbols processed
-        new_records: Number of new records added
-        updated_records: Number of records updated
-        errors: Number of errors encountered
+        records_collected: Number of records collected
+        status: Status of the collection (completed, failed, etc.)
         error_message: Error message if applicable
 
     Returns:
-        DataCollectionLog: The updated log entry
+        bool: True if update was successful, False otherwise
     """
-    log_entry = session.query(DataCollectionLog).get(log_id)
+    log_entry = session.get(DataCollectionLog, log_id)
     if log_entry:
-        log_entry.end_time = datetime.utcnow()
-        log_entry.symbols_processed = symbols_processed
-        log_entry.new_records_added = new_records
-        log_entry.records_updated = updated_records
-        log_entry.errors = errors
-        log_entry.status = "error" if errors > 0 else "completed"
+        log_entry.end_date = datetime.now().date()
+        log_entry.records_collected = records_collected
+        log_entry.status = status
         log_entry.error_message = error_message
         session.commit()
-        return log_entry
-    return None
+        return True
+    return False

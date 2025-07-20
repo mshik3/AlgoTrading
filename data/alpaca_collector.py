@@ -24,9 +24,12 @@ from dataclasses import dataclass
 
 # Alpaca SDK
 try:
-    from alpaca.data import StockHistoricalDataClient, TimeFrame
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data import (
+        StockHistoricalDataClient,
+        CryptoHistoricalDataClient,
+        TimeFrame,
+    )
+    from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 
     ALPACA_AVAILABLE = True
 except ImportError:
@@ -69,10 +72,14 @@ class AlpacaDataCollector:
             config = self._load_config_from_env()
 
         self.config = config
-        self.client = None
+        self.stock_client = None
+        self.crypto_client = None
 
         if ALPACA_AVAILABLE:
-            self.client = StockHistoricalDataClient(
+            self.stock_client = StockHistoricalDataClient(
+                api_key=config.api_key, secret_key=config.secret_key
+            )
+            self.crypto_client = CryptoHistoricalDataClient(
                 api_key=config.api_key, secret_key=config.secret_key
             )
 
@@ -80,6 +87,20 @@ class AlpacaDataCollector:
         self.request_count = 0
         self.last_reset = datetime.now()
         self.max_requests_per_minute = 200  # Free tier limit
+
+        # Crypto symbols mapping (Alpaca uses different symbols for crypto)
+        self.crypto_symbols = {
+            "BTCUSD": "BTC/USD",
+            "ETHUSD": "ETH/USD",
+            "ADAUSD": "ADA/USD",
+            "DOTUSD": "DOT/USD",
+            "LINKUSD": "LINK/USD",
+            "LTCUSD": "LTC/USD",
+            "BCHUSD": "BCH/USD",
+            "XRPUSD": "XRP/USD",
+            "SOLUSD": "SOL/USD",
+            "MATICUSD": "MATIC/USD",
+        }
 
     def _load_config_from_env(self) -> AlpacaConfig:
         """Load Alpaca configuration from environment variables."""
@@ -92,11 +113,31 @@ class AlpacaDataCollector:
                 "environment variables or provide AlpacaConfig object."
             )
 
+        # Validate API key format (basic validation)
+        if len(api_key) < 10 or len(secret_key) < 10:
+            raise ValueError("Invalid API key format. Keys should be at least 10 characters long.")
+
         return AlpacaConfig(
             api_key=api_key,
             secret_key=secret_key,
             paper=True,  # Use paper trading for safety
         )
+
+    def _is_crypto_symbol(self, symbol: str) -> bool:
+        """Check if symbol is a crypto asset."""
+        return symbol in self.crypto_symbols
+
+    def _get_alpaca_symbol(self, symbol: str) -> str:
+        """Convert our symbol format to Alpaca's format."""
+        if self._is_crypto_symbol(symbol):
+            return self.crypto_symbols[symbol]
+        return symbol
+
+    def _get_client(self, symbol: str):
+        """Get the appropriate client for the symbol type."""
+        if self._is_crypto_symbol(symbol):
+            return self.crypto_client
+        return self.stock_client
 
     def _check_rate_limit(self):
         """Check and manage rate limits."""
@@ -177,18 +218,29 @@ class AlpacaDataCollector:
                 logger.error("Alpaca SDK not available")
                 return None
 
-            # Create request
-            request = StockBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=TimeFrame.Day,
-                start=start_date,
-                end=end_date,
-            )
+            # Get appropriate client and symbol format
+            client = self._get_client(symbol)
+            alpaca_symbol = self._get_alpaca_symbol(symbol)
 
-            logger.info(f"Request created for {symbol}")
-
-            # Fetch data
-            bars = self.client.get_stock_bars(request)
+            # Create appropriate request based on asset type
+            if self._is_crypto_symbol(symbol):
+                request = CryptoBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=TimeFrame.Day,
+                    start=start_date,
+                    end=end_date,
+                )
+                logger.info(f"Crypto request created for {symbol} ({alpaca_symbol})")
+                bars = client.get_crypto_bars(request)
+            else:
+                request = StockBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=TimeFrame.Day,
+                    start=start_date,
+                    end=end_date,
+                )
+                logger.info(f"Stock request created for {symbol}")
+                bars = client.get_stock_bars(request)
 
             logger.info(f"Response received: {type(bars)}")
             if bars:
@@ -204,25 +256,25 @@ class AlpacaDataCollector:
             # Try different ways to access the data
             try:
                 # Method 1: Direct access to BarSet df
-                if hasattr(bars, 'df'):
+                if hasattr(bars, "df"):
                     df = bars.df
                     logger.info(f"Found data with {len(df)} rows")
-                # Method 2: Direct access by symbol
-                elif hasattr(bars, symbol):
-                    df = bars[symbol].df
-                    logger.info(f"Found data for {symbol} with {len(df)} rows")
+                # Method 2: Direct access by symbol (use alpaca_symbol for crypto)
+                elif hasattr(bars, alpaca_symbol):
+                    df = bars[alpaca_symbol].df
+                    logger.info(f"Found data for {symbol} ({alpaca_symbol}) with {len(df)} rows")
                 # Method 3: Iterate through bars
-                elif hasattr(bars, '__iter__'):
+                elif hasattr(bars, "__iter__"):
                     for bar in bars:
-                        if hasattr(bar, 'symbol') and bar.symbol == symbol:
+                        if hasattr(bar, "symbol") and bar.symbol == alpaca_symbol:
                             df = bar.df
-                            logger.info(f"Found data for {symbol} with {len(df)} rows")
+                            logger.info(f"Found data for {symbol} ({alpaca_symbol}) with {len(df)} rows")
                             break
                 else:
-                    logger.warning(f"No data found for {symbol}")
+                    logger.warning(f"No data found for {symbol} ({alpaca_symbol})")
                     return None
             except Exception as e:
-                logger.error(f"Error accessing data for {symbol}: {str(e)}")
+                logger.error(f"Error accessing data for {symbol} ({alpaca_symbol}): {str(e)}")
                 return None
 
             if df.empty:
@@ -264,7 +316,7 @@ class AlpacaDataCollector:
         Get current price for a symbol.
 
         Args:
-            symbol: Stock symbol
+            symbol: Stock or crypto symbol
 
         Returns:
             Current price or None if failed
@@ -272,20 +324,33 @@ class AlpacaDataCollector:
         try:
             self._check_rate_limit()
 
+            # Get appropriate client and symbol format
+            client = self._get_client(symbol)
+            alpaca_symbol = self._get_alpaca_symbol(symbol)
+            
             # Fetch today's data to get current price
             today = datetime.now()
-            request = StockBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=TimeFrame.Day,
-                start=today
-                - timedelta(days=5),  # Get last 5 days to ensure we have today
-                end=today,
-            )
+            
+            # Create appropriate request based on asset type
+            if self._is_crypto_symbol(symbol):
+                request = CryptoBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=TimeFrame.Day,
+                    start=today - timedelta(days=5),  # Get last 5 days to ensure we have today
+                    end=today,
+                )
+                bars = client.get_crypto_bars(request)
+            else:
+                request = StockBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=TimeFrame.Day,
+                    start=today - timedelta(days=5),  # Get last 5 days to ensure we have today
+                    end=today,
+                )
+                bars = client.get_stock_bars(request)
 
-            bars = self.client.get_stock_bars(request)
-
-            if bars and symbol in bars:
-                latest_bar = bars[symbol].df.iloc[-1]
+            if bars and alpaca_symbol in bars:
+                latest_bar = bars[alpaca_symbol].df.iloc[-1]
                 self.request_count += 1
                 return float(latest_bar["close"])
 
@@ -374,9 +439,7 @@ if __name__ == "__main__":
                 if data is not None:
                     print(f"✓ {symbol}: {len(data)} days of data")
                     print(f"  Latest price: ${data['Close'].iloc[-1]:.2f}")
-                    print(
-                        f"  Date range: {data.index[0]} to {data.index[-1]}"
-                    )
+                    print(f"  Date range: {data.index[0]} to {data.index[-1]}")
                 else:
                     print(f"✗ Failed to fetch data for {symbol}")
 

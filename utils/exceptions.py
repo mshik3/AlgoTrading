@@ -123,14 +123,16 @@ def log_exception(
         log_message = (
             f"{context}: {exception.message}" if context else exception.message
         )
-        logger.error(
-            log_message,
-            extra={
-                "exception_type": type(exception).__name__,
-                "details": exception.details,
-                **getattr(exception, "__dict__", {}),
-            },
-        )
+        # Filter out reserved keys to avoid conflicts
+        extra_data = {
+            "exception_type": type(exception).__name__,
+            "details": exception.details,
+        }
+        # Add non-reserved attributes
+        for key, value in getattr(exception, "__dict__", {}).items():
+            if key not in ["message", "asctime"]:
+                extra_data[key] = value
+        logger.error(log_message, extra=extra_data)
     else:
         # Standard exceptions
         log_message = f"{context}: {str(exception)}" if context else str(exception)

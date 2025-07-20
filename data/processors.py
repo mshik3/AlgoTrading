@@ -71,7 +71,7 @@ class DataValidator:
                 f"DataFrame for {symbol} contains OHLC relationship violations"
             )
 
-        return True, ""
+        return True, None
 
     @staticmethod
     def check_continuity(df, max_gap_days=5):
@@ -119,6 +119,70 @@ class DataCleaner:
     """Cleans market data to ensure quality and consistency."""
 
     @staticmethod
+    def clean_dataframe(
+        df, symbol=None, fill_missing=True, remove_outliers=True, adjust_prices=False
+    ):
+        """
+        Clean a DataFrame of market data.
+
+        Args:
+            df (pandas.DataFrame): DataFrame with OHLCV data
+            symbol (str): Symbol for logging purposes
+            fill_missing (bool): Whether to fill missing values
+            remove_outliers (bool): Whether to remove outliers
+            adjust_prices (bool): Whether to adjust OHLC based on Adj Close
+
+        Returns:
+            pandas.DataFrame: Cleaned DataFrame
+        """
+        if df is None or df.empty:
+            logger.info(f"Empty DataFrame for {symbol}, returning as is")
+            return df
+
+        logger.info(f"Starting data cleaning for {symbol} with {len(df)} rows")
+
+        result = df.copy()
+
+        # Validate required columns
+        required_columns = ["Open", "High", "Low", "Close", "Volume", "Adj Close"]
+        missing_columns = [col for col in required_columns if col not in result.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+
+        # Sort by date (index)
+        if not result.index.is_monotonic_increasing:
+            result = result.sort_index()
+            logger.info(f"Sorted data by date for {symbol}")
+
+        # Remove duplicates
+        initial_rows = len(result)
+        result = result.drop_duplicates()
+        if len(result) < initial_rows:
+            logger.info(
+                f"Removed {initial_rows - len(result)} duplicate rows for {symbol}"
+            )
+
+        # Fill missing values
+        if fill_missing:
+            result = DataCleaner.fill_missing_values(result)
+            logger.info(f"Filled missing values for {symbol}")
+
+        # Remove outliers
+        if remove_outliers:
+            for col in ["Open", "High", "Low", "Close", "Adj Close"]:
+                result = DataCleaner.remove_outliers(result, column=col, symbol=symbol)
+
+        # Apply adjustments
+        if adjust_prices:
+            result = DataCleaner.apply_adjustments(result)
+            logger.info(f"Applied price adjustments for {symbol}")
+
+        logger.info(
+            f"Completed data cleaning for {symbol}: {len(result)} rows remaining"
+        )
+        return result
+
+    @staticmethod
     def fill_missing_values(df, method="ffill"):
         """
         Fill missing values in a DataFrame.
@@ -134,53 +198,84 @@ class DataCleaner:
             return df
 
         if method == "ffill":
-            return df.fillna(method="ffill").fillna(method="bfill")
+            return df.ffill().bfill()
         elif method == "bfill":
-            return df.fillna(method="bfill").fillna(method="ffill")
+            return df.bfill().ffill()
         elif method == "interpolate":
-            return (
-                df.interpolate(method="linear")
-                .fillna(method="ffill")
-                .fillna(method="bfill")
-            )
+            return df.interpolate(method="linear").ffill().bfill()
         else:
             logger.warning(f"Unknown fill method: {method}, using 'ffill'")
-            return df.fillna(method="ffill").fillna(method="bfill")
+            return df.ffill().bfill()
 
     @staticmethod
-    def remove_outliers(df, column="Close", window=20, threshold=3):
+    def remove_outliers(df, column="Close", window=20, threshold=3, symbol=None):
         """
-        Remove outliers from a DataFrame using rolling z-score.
+        Remove outliers from a DataFrame using multiple detection methods.
 
         Args:
             df (pandas.DataFrame): DataFrame with OHLCV data
             column (str): Column to check for outliers
             window (int): Rolling window size
             threshold (float): Z-score threshold for outlier detection
+            symbol (str): Symbol for logging purposes
 
         Returns:
-            pandas.DataFrame: DataFrame with outliers replaced
+            pandas.DataFrame: DataFrame with outliers removed
         """
-        if df is None or df.empty or window >= len(df):
+        if df is None or df.empty:
             return df
 
         result = df.copy()
+        initial_rows = len(result)
+        outliers_mask = pd.Series([False] * len(df), index=df.index)
 
-        # Calculate rolling mean and std
-        rolling_mean = df[column].rolling(window=window, center=True).mean()
-        rolling_std = df[column].rolling(window=window, center=True).std()
+        # Method 1: Simple statistical outlier detection (works for small datasets)
+        if len(df) >= 3:
+            Q1 = df[column].quantile(0.25)
+            Q3 = df[column].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
 
-        # Calculate z-scores
-        z_scores = np.abs((df[column] - rolling_mean) / rolling_std)
+            # Detect extreme outliers (beyond 3x IQR)
+            extreme_outliers = (df[column] < lower_bound - 2 * IQR) | (
+                df[column] > upper_bound + 2 * IQR
+            )
+            outliers_mask |= extreme_outliers
 
-        # Identify outliers
-        outliers = z_scores > threshold
+        # Method 2: Rolling z-score (works for larger datasets)
+        if len(df) >= window and window < len(df):
+            # Calculate rolling mean and std
+            rolling_mean = df[column].rolling(window=window, center=True).mean()
+            rolling_std = df[column].rolling(window=window, center=True).std()
 
-        if outliers.any():
-            logger.info(f"Found {outliers.sum()} outliers in {column}")
+            # Calculate z-scores
+            z_scores = np.abs((df[column] - rolling_mean) / rolling_std)
 
-            # Replace outliers with rolling mean
-            result.loc[outliers, column] = rolling_mean[outliers]
+            # Identify outliers
+            rolling_outliers = z_scores > threshold
+            outliers_mask |= rolling_outliers
+
+        # Method 3: Percentage-based outlier detection for extreme cases
+        if len(df) >= 5:
+            mean_val = df[column].mean()
+            std_val = df[column].std()
+
+            # Detect values that are more than 5 standard deviations from mean
+            extreme_deviation = np.abs(df[column] - mean_val) > 5 * std_val
+            outliers_mask |= extreme_deviation
+
+        # Remove outlier rows
+        if outliers_mask.any():
+            logger.info(
+                f"Found {outliers_mask.sum()} outliers in {column} for {symbol}"
+            )
+            result = result[~outliers_mask]
+
+            if symbol:
+                logger.info(
+                    f"Removed {initial_rows - len(result)} outlier rows from {column} for {symbol}"
+                )
 
         return result
 
@@ -214,10 +309,27 @@ class DataCleaner:
 class DataProcessor:
     """Processes market data by validating and cleaning."""
 
-    def __init__(self):
+    def __init__(self, **config):
         """Initialize the data processor."""
         self.validator = DataValidator()
         self.cleaner = DataCleaner()
+
+        # Validate configuration
+        valid_config_keys = {
+            "remove_outliers",
+            "fill_method",
+            "min_data_points",
+            "validate",
+            "fill_missing",
+            "adjust_prices",
+        }
+
+        for key in config:
+            if key not in valid_config_keys:
+                raise ValueError(f"Invalid configuration key: {key}")
+
+        # Store configuration
+        self.config = config
 
     def process_dataframe(
         self,
@@ -251,20 +363,32 @@ class DataProcessor:
             is_valid, error_msg = self.validator.validate_dataframe(df, symbol)
             if not is_valid:
                 logger.error(f"Invalid data for {symbol}: {error_msg}")
-                return None
+                raise ValueError(f"Invalid data for {symbol}: {error_msg}")
 
-        # Process data
-        if fill_missing:
-            df = self.cleaner.fill_missing_values(df)
+        # Process data using clean_dataframe method
+        df = self.cleaner.clean_dataframe(
+            df,
+            fill_missing=fill_missing,
+            remove_outliers=remove_outliers,
+            adjust_prices=adjust_prices,
+        )
 
-        if remove_outliers:
-            for col in ["Open", "High", "Low", "Close", "Adj Close"]:
-                df = self.cleaner.remove_outliers(df, column=col)
-
-        if adjust_prices:
-            df = self.cleaner.apply_adjustments(df)
-
+        logger.info(f"Successfully processed data for {symbol}: {len(df)} rows")
         return df
+
+    def process_data(self, df, symbol=None, **kwargs):
+        """
+        Alias for process_dataframe for backward compatibility.
+
+        Args:
+            df (pandas.DataFrame): DataFrame with OHLCV data
+            symbol (str): Symbol for logging
+            **kwargs: Additional arguments passed to process_dataframe
+
+        Returns:
+            pandas.DataFrame: Processed DataFrame
+        """
+        return self.process_dataframe(df, symbol, **kwargs)
 
     def check_data_quality(self, df, symbol=None, max_gap_days=5):
         """
