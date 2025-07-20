@@ -155,35 +155,35 @@ These patterns will serve as confirmatory signals rather than primary triggers.
 A PostgreSQL database will track:
 
 - **Trades Table**
-  - Transaction ID, ticker, entry/exit prices, dates, quantity
-  - Strategy that triggered the trade
-  - Position size and type (long/short)
-  - Profit/loss and tax classification
+    - Transaction ID, ticker, entry/exit prices, dates, quantity
+    - Strategy that triggered the trade
+    - Position size and type (long/short)
+    - Profit/loss and tax classification
 - **Trade Signals Table**
-  - Technical indicators at time of entry/exit:
-    - RSI value
-    - Bollinger Band position (% from middle band)
-    - Moving average values and relationships
-    - Volume indicators
-    - Candlestick patterns identified
-  - Fundamental metrics if applicable
-  - Market conditions (VIX, sector performance)
+    - Technical indicators at time of entry/exit:
+        - RSI value
+        - Bollinger Band position (% from middle band)
+        - Moving average values and relationships
+        - Volume indicators
+        - Candlestick patterns identified
+    - Fundamental metrics if applicable
+    - Market conditions (VIX, sector performance)
 - **Strategy Performance**
-  - Win/loss ratio by strategy
-  - Average holding period
-  - Profit factor and Sharpe ratio
-  - Maximum drawdown
-  - Performance by asset class
+    - Win/loss ratio by strategy
+    - Average holding period
+    - Profit factor and Sharpe ratio
+    - Maximum drawdown
+    - Performance by asset class
 - **Portfolio Tracking**
-  - Asset allocation over time
-  - Cumulative returns
-  - Exposure by sector
-  - Tax implications of realized/unrealized gains
+    - Asset allocation over time
+    - Cumulative returns
+    - Exposure by sector
+    - Tax implications of realized/unrealized gains
 - **System Logs**
-  - Execution timestamps
-  - Errors and warnings
-  - API call monitoring
-  - Performance metrics
+    - Execution timestamps
+    - Errors and warnings
+    - API call monitoring
+    - Performance metrics
 
 ## 7. System Execution
 
@@ -257,54 +257,58 @@ By implementing this system with careful risk management and consistent evaluati
 - **Components**: Distinct modules for data collection, strategy calculation, signal generation, and execution
 - **Rationale**: Aligns with the sequential nature of trading operations and provides flexibility to modify individual components
 - **Structure**:
-  ```
-  algotrading/
-  ├── data/          # Data collection and processing
-  │   ├── collectors.py  # Fetches data from sources
-  │   ├── processors.py  # Cleans and prepares data
-  │   └── storage.py     # Handles database operations
-  ├── strategies/    # Trading strategy implementations
-  │   ├── mean_reversion.py
-  │   ├── deep_value.py
-  │   ├── etf_rotation.py
-  │   ├── golden_cross.py
-  │   └── base.py        # Common strategy interface
-  ├── indicators/    # Technical indicator calculations
-  │   └── technical.py   # Wrapper for technical indicators
-  ├── backtesting/   # Backtesting framework
-  │   └── engine.py      # Interface with backtrader
-  ├── risk/          # Risk management rules
-  │   ├── strategy_risk.py  # Strategy-specific risk rules
-  │   └── portfolio_risk.py # Portfolio-level risk management
-  ├── execution/     # Trade execution components
-  │   ├── alpaca.py      # Alpaca API integration
-  │   ├── paper.py       # Paper trading simulation
-  │   └── manual.py      # Manual execution helpers
-  ├── utils/         # Utility functions and configs
-  │   ├── config.py      # Configuration management
-  │   └── logging.py     # Logging utilities
-  └── pipeline.py    # Main orchestration
-  ```
+    
+    ```
+    algotrading/
+    ├── data/          # Data collection and processing
+    │   ├── collectors.py  # Fetches data from sources
+    │   ├── processors.py  # Cleans and prepares data
+    │   └── storage.py     # Handles database operations
+    ├── strategies/    # Trading strategy implementations
+    │   ├── mean_reversion.py
+    │   ├── deep_value.py
+    │   ├── etf_rotation.py
+    │   ├── golden_cross.py
+    │   └── base.py        # Common strategy interface
+    ├── indicators/    # Technical indicator calculations
+    │   └── technical.py   # Wrapper for technical indicators
+    ├── backtesting/   # Backtesting framework
+    │   └── engine.py      # Interface with backtrader
+    ├── risk/          # Risk management rules
+    │   ├── strategy_risk.py  # Strategy-specific risk rules
+    │   └── portfolio_risk.py # Portfolio-level risk management
+    ├── execution/     # Trade execution components
+    │   ├── alpaca.py      # Alpaca API integration
+    │   ├── paper.py       # Paper trading simulation
+    │   └── manual.py      # Manual execution helpers
+    ├── utils/         # Utility functions and configs
+    │   ├── config.py      # Configuration management
+    │   └── logging.py     # Logging utilities
+    └── pipeline.py    # Main orchestration
+    ```
+    
 
 ## 2. Database & Storage
 
 - **Database**: PostgreSQL (local instance)
 - **Schema Design**: Single table approach for market data
-  ```sql
-  CREATE TABLE market_data (
-      id SERIAL PRIMARY KEY,
-      symbol VARCHAR(10) NOT NULL,
-      date DATE NOT NULL,
-      open NUMERIC(10,2) NOT NULL,
-      high NUMERIC(10,2) NOT NULL,
-      low NUMERIC(10,2) NOT NULL,
-      close NUMERIC(10,2) NOT NULL,
-      volume BIGINT NOT NULL,
-      adjusted_close NUMERIC(10,2) NOT NULL,
-      UNIQUE(symbol, date)
-  );
-
-  ```
+    
+    ```sql
+    CREATE TABLE market_data (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        date DATE NOT NULL,
+        open NUMERIC(10,2) NOT NULL,
+        high NUMERIC(10,2) NOT NULL,
+        low NUMERIC(10,2) NOT NULL,
+        close NUMERIC(10,2) NOT NULL,
+        volume BIGINT NOT NULL,
+        adjusted_close NUMERIC(10,2) NOT NULL,
+        UNIQUE(symbol, date)
+    );
+    
+    ```
+    
 - **Storage Requirements**: ~10MB for initial dataset (5 years, 50 assets)
 - **Scalability**: Start simple, with option to partition if needed in future
 
@@ -313,9 +317,9 @@ By implementing this system with careful risk management and consistent evaluati
 - **Approach**: Incremental data collection with tracking of last successful update
 - **Data Sources**: Begin with Yahoo Finance API, with flexibility to add additional sources
 - **Initial Dataset**:
-  - 30-40 liquid stocks across major sectors
-  - 10-15 key ETFs
-  - 5 years of historical daily data
+    - 30-40 liquid stocks across major sectors
+    - 10-15 key ETFs
+    - 5 years of historical daily data
 - **Required Fields**: Date, Open, High, Low, Close, Volume, Adjusted Close
 - **Benchmarks**: VIX daily values, S&P 500 daily values
 
@@ -323,21 +327,21 @@ By implementing this system with careful risk management and consistent evaluati
 
 - **Implementation**: Leverage existing libraries (ta-lib, pandas-ta) for efficiency
 - **Core Indicators**:
-  - Moving Averages (50-day, 200-day)
-  - Relative Strength Index (RSI)
-  - Bollinger Bands
-  - Volume analysis
-  - Candlestick patterns
+    - Moving Averages (50-day, 200-day)
+    - Relative Strength Index (RSI)
+    - Bollinger Bands
+    - Volume analysis
+    - Candlestick patterns
 
 ## 5. Strategy Implementation
 
 - **Approach**: Implement all four strategies simultaneously for research purposes
 - **Strategy Framework**: Common base class with strategy-specific implementations
 - **Implementation Order**:
-  1. Data collection first
-  2. Backtesting framework
-  3. Individual strategy implementation
-  4. Risk management integration
+    1. Data collection first
+    2. Backtesting framework
+    3. Individual strategy implementation
+    4. Risk management integration
 
 ## 6. Backtesting Framework
 
@@ -349,20 +353,20 @@ By implementing this system with careful risk management and consistent evaluati
 ## 7. Risk Management
 
 - **Approach**: Hybrid risk management
-  - Basic risk parameters in each strategy
-  - Portfolio-level risk manager for final approval
+    - Basic risk parameters in each strategy
+    - Portfolio-level risk manager for final approval
 - **Implementation**: Rules-based system following whitepaper specifications
-  - Maximum 20% of portfolio in any single stock position
-  - Maximum 30% of portfolio in any single ETF position
-  - Stop-loss orders at maximum 10% below entry for individual stocks
-  - Portfolio-level circuit breakers (pause trading if overall portfolio drops >5% in a week)
+    - Maximum 20% of portfolio in any single stock position
+    - Maximum 30% of portfolio in any single ETF position
+    - Stop-loss orders at maximum 10% below entry for individual stocks
+    - Portfolio-level circuit breakers (pause trading if overall portfolio drops >5% in a week)
 
 ## 8. Execution System
 
 - **Flexibility**: Modular design supporting three execution modes:
-  1. Manual review workflow (default for initial implementation)
-  2. Semi-automated with approval
-  3. Fully automated
+    1. Manual review workflow (default for initial implementation)
+    2. Semi-automated with approval
+    3. Fully automated
 - **Broker**: Alpaca API integration
 - **Transition**: Designed to transition from manual to automated as confidence builds
 
@@ -377,10 +381,10 @@ By implementing this system with careful risk management and consistent evaluati
 
 - **Scheduling Method**: Cron jobs for reliability and simplicity
 - **Operational Schedule**:
-  - Daily data collection
-  - Weekly strategy calculations
-  - Weekly trade execution (default manual review)
-  - Monthly performance review
+    - Daily data collection
+    - Weekly strategy calculations
+    - Weekly trade execution (default manual review)
+    - Monthly performance review
 
 ## 11. Development Practices
 
@@ -388,9 +392,9 @@ By implementing this system with careful risk management and consistent evaluati
 - **Code Organization**: Traditional Python project structure
 - **Development Principle**: 80/20 approach - progress over perfection
 - **Configuration**: Hybrid approach
-  - Environment variables for sensitive data (.env file, excluded from Git)
-  - Config files for non-sensitive settings
-  - Template .env.example for documentation
+    - Environment variables for sensitive data (.env file, excluded from Git)
+    - Config files for non-sensitive settings
+    - Template .env.example for documentation
 
 ## 12. Deployment & Operations
 
@@ -402,18 +406,18 @@ By implementing this system with careful risk management and consistent evaluati
 ## 13. Implementation Roadmap
 
 1. **Phase 1**: Data Collection Pipeline
-   - Database schema setup
-   - Incremental data collector implementation
-   - Data validation and storage
+    - Database schema setup
+    - Incremental data collector implementation
+    - Data validation and storage
 2. **Phase 2**: Backtesting Framework
-   - Backtrader integration
-   - Strategy implementation
-   - Performance metrics
+    - Backtrader integration
+    - Strategy implementation
+    - Performance metrics
 3. **Phase 3**: Risk Management & Execution
-   - Risk rules implementation
-   - Alpaca API integration
-   - Execution modes
+    - Risk rules implementation
+    - Alpaca API integration
+    - Execution modes
 4. **Phase 4**: Monitoring & Refinement
-   - Performance dashboard
-   - Strategy refinement
-   - System optimization
+    - Performance dashboard
+    - Strategy refinement
+    - System optimization

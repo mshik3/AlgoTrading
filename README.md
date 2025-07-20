@@ -1,59 +1,42 @@
 # Algorithmic Trading System
 
-This is a comprehensive algorithmic trading system designed for small accounts ($500-$1000) with dual-asset capabilities across both equity and options markets. The system follows a modular pipeline architecture to collect market data, implement trading strategies across both asset types, and execute trades with sophisticated risk management.
+This is a comprehensive algorithmic trading system designed for small accounts ($500-$1000) focusing on equity markets. The system follows a modular pipeline architecture to collect market data, implement diversified equity trading strategies, and execute trades with sophisticated risk management.
 
 ## System Architecture
 
 ```
 algotrading/
-├── data/          # Enhanced data collection and processing
-│   ├── collectors.py     # Equity + Options data fetching
-│   ├── processors.py     # Data cleaning for both asset types
-│   └── storage.py        # Enhanced schema for options data
+├── data/          # Data collection and processing
+│   ├── collectors.py     # Market data fetching from Yahoo Finance, Alpha Vantage
+│   ├── processors.py     # Data cleaning and validation
+│   └── storage.py        # Database operations with PostgreSQL
 ├── strategies/    # Trading strategy implementations
 │   ├── equity/           # 4 equity strategies
 │   │   ├── mean_reversion.py
 │   │   ├── deep_value.py
 │   │   ├── etf_rotation.py
 │   │   └── golden_cross.py
-│   ├── options/          # 5 options strategies
-│   │   ├── covered_calls.py
-│   │   ├── cash_secured_puts.py
-│   │   ├── iron_condors.py
-│   │   ├── credit_spreads.py
-│   │   └── protective_puts.py
 │   └── base.py           # Common strategy interface
 ├── indicators/    # Technical indicator calculations
-│   ├── technical.py      # Equity indicators
-│   └── options.py        # Options indicators (IV, Greeks)
-├── backtesting/   # Backtesting framework for both asset types
-├── risk/          # Enhanced risk management
-│   ├── equity_risk.py    # Equity-specific risk rules
-│   ├── options_risk.py   # Options-specific risk rules
-│   └── portfolio_risk.py # Portfolio-level risk management
+│   └── technical.py      # RSI, MACD, Bollinger Bands, Moving Averages
+├── backtesting/   # Backtesting framework
+├── risk/          # Risk management
+│   └── portfolio_risk.py # Position sizing and circuit breakers
 ├── execution/     # Trade execution components
-│   ├── alpaca.py         # Enhanced for options trading
-│   ├── paper.py          # Paper trading for both assets
-│   └── allocation.py     # Asset allocation management
+│   ├── alpaca.py         # Alpaca API integration
+│   └── paper.py          # Paper trading simulation
 ├── utils/         # Utility functions and configs
-└── pipeline.py    # Main orchestration with dual-asset support
+└── pipeline.py    # Main orchestration
 ```
 
-## Dual-Asset Portfolio Structure
+## Portfolio Structure
 
 ```
 Total Portfolio ($500-$1000)
-├── Equity Strategies (60-80% allocation)
-│   ├── Mean Reversion (15-20%)
-│   ├── Deep Value (15-20%)
-│   ├── ETF Rotation (15-20%)
-│   └── Golden Cross (15-20%)
-└── Options Strategies (20-40% allocation)
-    ├── Covered Calls (5-10%)
-    ├── Cash Secured Puts (5-10%)
-    ├── Iron Condors (3-8%)
-    ├── Credit Spreads (3-8%)
-    └── Protective Puts (2-5%)
+├── Mean Reversion Strategy (25%)
+├── Deep Value Strategy (25%)
+├── ETF Rotation Strategy (25%)
+└── Golden Cross Strategy (25%)
 ```
 
 ## Features
@@ -61,31 +44,24 @@ Total Portfolio ($500-$1000)
 ### Equity Trading Capabilities
 
 - Data collection from Yahoo Finance with incremental updates
-- Four diversified equity strategies (mean reversion, deep value, ETF rotation, golden cross)
+- Four diversified equity strategies for different market conditions
 - Technical indicator analysis (RSI, MACD, moving averages, Bollinger Bands)
 - Risk management with position sizing and circuit breakers
-
-### Options Trading Capabilities
-
-- Real-time options chain data collection via Alpaca API
-- Five complementary options strategies for income and portfolio insurance
-- Greeks-based risk management (Delta, Gamma, Theta, Vega monitoring)
-- Implied volatility analysis and volatility-based strategy selection
-- Assignment risk management and time decay optimization
+- Tax-efficient trading approach with long-term capital gains optimization
 
 ### System-Wide Features
 
-- PostgreSQL database for comprehensive trade tracking across both asset types
-- Dynamic asset allocation between equity and options strategies
-- Performance tracking and analytics for both asset classes
-- Tax-efficient trading approach with long-term capital gains optimization
-- Comprehensive backtesting framework for both equities and options
+- PostgreSQL database for comprehensive trade tracking
+- Performance tracking and analytics with key metrics
+- Backtesting framework for strategy validation
+- Automated data collection and processing pipeline
+- Configurable risk management and position sizing
 
 ## Requirements
 
 - Python 3.8+
 - PostgreSQL database
-- Alpaca brokerage account with options trading approval
+- Alpaca brokerage account for live trading
 - Required Python packages (see requirements.txt)
 
 ## Setup Instructions
@@ -94,13 +70,13 @@ Total Portfolio ($500-$1000)
 
 ```bash
 # Create a virtual environment
-python -m venv env
+python -m venv venv
 
 # Activate the virtual environment
 # On macOS/Linux:
-source env/bin/activate
+source venv/bin/activate
 # On Windows:
-# env\Scripts\activate
+# venv\Scripts\activate
 ```
 
 ### 2. Install dependencies
@@ -137,14 +113,11 @@ python pipeline.py --task collect
 ### Data Collection
 
 ```bash
-# Collect equity data for all active symbols
-python pipeline.py --task collect --asset-type equity
+# Collect data for all active symbols
+python pipeline.py --task collect
 
-# Collect options data for specific underlyings
-python pipeline.py --task collect --asset-type options --symbols AAPL MSFT SPY
-
-# Collect data for both asset types
-python pipeline.py --task collect --asset-type both
+# Collect data for specific symbols
+python pipeline.py --task collect --symbols AAPL MSFT SPY
 
 # Force update of existing data
 python pipeline.py --task collect --force
@@ -153,93 +126,135 @@ python pipeline.py --task collect --force
 ### Strategy Execution (Coming Soon)
 
 ```bash
-# Run equity strategies only
-python pipeline.py --task trade --asset-type equity --paper
+# Run all strategies in paper trading mode
+python pipeline.py --task trade --paper
 
-# Run options strategies only
-python pipeline.py --task trade --asset-type options --paper
+# Run specific strategy
+python pipeline.py --task trade --strategy mean_reversion --paper
 
-# Run all strategies with allocation management
-python pipeline.py --task trade --asset-type both --paper
+# View strategy signals without trading
+python pipeline.py --task signals
 ```
 
 ### Backtesting (Coming Soon)
 
 ```bash
-# Backtest equity strategies
-python pipeline.py --task backtest --asset-type equity --strategy mean_reversion
+# Backtest all strategies
+python pipeline.py --task backtest
 
-# Backtest options strategies
-python pipeline.py --task backtest --asset-type options --strategy covered_calls
+# Backtest specific strategy
+python pipeline.py --task backtest --strategy mean_reversion
 
-# Backtest complete dual-asset portfolio
-python pipeline.py --task backtest --asset-type both
-```
-
-### Asset Allocation Management
-
-```bash
-# View current allocation
-python pipeline.py --task allocation --action view
-
-# Rebalance between equity and options
-python pipeline.py --task allocation --action rebalance
-
-# Set custom allocation percentages
-python pipeline.py --task allocation --action set --equity-pct 70 --options-pct 30
+# Generate performance report
+python pipeline.py --task backtest --report
 ```
 
 ## Trading Strategies
 
-### Equity Strategies (60-80% of Portfolio)
+The system implements four diversified equity strategies to reduce risk and maximize opportunities across different market conditions:
 
-1. **Mean Reversion**: Identifies assets 2+ standard deviations from 50-day moving average
-2. **Deep Value**: Places limit orders 20-25% below market price on quality stocks
-3. **ETF Rotation**: Rotates capital to top-performing sector ETFs based on 3-month performance
-4. **Golden Cross**: Trades 50-day/200-day moving average crossovers
+### 1. Mean Reversion Strategy (25% of Portfolio)
 
-### Options Strategies (20-40% of Portfolio)
+**Concept**: Identifies assets that have deviated significantly from their historical averages and bets on them returning to normal levels.
 
-1. **Covered Calls**: Generate income on existing equity positions
-2. **Cash Secured Puts**: Get paid to potentially buy stocks at lower prices
-3. **Iron Condors**: Profit from low volatility, range-bound markets
-4. **Credit Spreads**: Generate income with directional bias
-5. **Protective Puts**: Portfolio insurance for equity positions
+**Implementation**:
+
+- Track stocks and ETFs that are 2+ standard deviations from their 50-day moving average
+- Use RSI and Bollinger Bands for confirmation
+- Place limit orders when assets are significantly oversold
+- Set profit targets at 15-20% to offset tax impacts
+
+**Asset Allocation**:
+
+- 60% individual stocks (higher volatility creates more opportunities)
+- 40% sector ETFs
+
+### 2. Deep Value Strategy (25% of Portfolio)
+
+**Concept**: Places limit orders significantly below market price and waits for volatility to fill them, similar to patient value investing.
+
+**Implementation**:
+
+- Identify quality assets with good fundamentals
+- Place limit buy orders 20-25% below current market prices
+- Set take-profit targets at 20%+ (preferably holding for >1 year)
+- Accept that many orders will never fill
+
+**Asset Allocation**:
+
+- 60% individual quality stocks with higher volatility
+- 40% sector ETFs for market-wide correction opportunities
+
+### 3. ETF Rotation Strategy (25% of Portfolio)
+
+**Concept**: Identifies the strongest sector ETFs and rotates capital to follow market trends.
+
+**Implementation**:
+
+- Track 5-10 sector ETFs (technology, finance, healthcare, etc.)
+- Weekly: Rank them by 3-month performance metrics
+- Buy top 1-2 performers, hold until they drop below a certain rank
+- Review and potentially rotate positions monthly
+
+**Asset Allocation**:
+
+- 100% sector ETFs (this strategy is specifically designed for ETFs)
+
+### 4. Golden Cross Strategy (25% of Portfolio)
+
+**Concept**: A classic trend-following approach that buys when short-term momentum crosses above long-term trends.
+
+**Implementation**:
+
+- Buy when the 50-day moving average crosses above the 200-day moving average
+- Sell when it crosses below
+- Apply to both broad market ETFs and select large-cap stocks
+- Typically generates just a few trades per year
+
+**Asset Allocation**:
+
+- 50% broad market ETFs (SPY, QQQ)
+- 50% large-cap individual stocks
 
 ## Risk Management
 
-### Equity Risk Controls
+### Position Sizing & Risk Controls
 
-- Maximum 20% of portfolio in any single stock
-- Maximum 30% of portfolio in any single ETF
-- 10% stop-loss on individual positions
-- Portfolio circuit breakers on 5% weekly losses
+- Maximum 20% of portfolio in any single stock position
+- Maximum 30% of portfolio in any single ETF position
+- Stop-loss orders set at maximum 10% below entry for individual stocks
+- Portfolio-level circuit breakers (pause trading if overall portfolio drops >5% in a week)
+- Fractional shares used to properly size positions within budget
 
-### Options Risk Controls
+### Risk Management Protocols
 
-- Maximum 10% of portfolio per options trade
-- Maximum 25% total options exposure
-- Greeks-based limits (Delta: -0.3 to +0.5, controlled Gamma)
-- Time-based exits (50% profit or 21 DTE)
-- Assignment risk management
-
-### Cross-Asset Risk Management
-
-- Correlation monitoring between equity and options positions
-- Dynamic allocation adjustments based on performance
-- Stress testing across various market scenarios
+- Profit-taking targets defined for each strategy
+- Weekly review of all positions and strategy performance
+- Tax-loss harvesting protocols
+- Position sizes scaled according to volatility (more volatile assets get smaller positions)
 
 ## Performance Tracking
 
-The system tracks comprehensive metrics across both asset types:
+The system tracks comprehensive metrics to evaluate strategy performance:
 
-- **Equity Metrics**: Win rate, profit factor, Sharpe ratio, tax efficiency
-- **Options Metrics**: Premium collection efficiency, assignment rates, Greeks performance
-- **Portfolio Metrics**: Combined risk-adjusted returns, allocation efficiency, maximum drawdown
+### Key Performance Metrics
+
+- **Win Rate**: Percentage of profitable trades
+- **Profit Factor**: Gross profits divided by gross losses
+- **Maximum Drawdown**: Largest peak-to-trough decline
+- **Sharpe Ratio**: Risk-adjusted returns
+- **Tax Efficiency**: Long-term vs short-term capital gains ratio
+
+### Database Tracking
+
+- **Trades Table**: Complete transaction history with entry/exit prices, dates, P&L
+- **Trade Signals Table**: Technical indicators at time of signal generation
+- **Strategy Performance**: Win/loss ratios, average holding periods, profit factors by strategy
+- **Portfolio Tracking**: Asset allocation over time, cumulative returns, sector exposure
 
 ## Development Status & Progress Tracker
 
-**Current Status**: ~60% Complete (Core Trading Engine Phase)
+**Current Status**: ~40% Complete (Core Infrastructure Phase)
 
 ### 📊 **Phase 1: Data Infrastructure** ✅ COMPLETE
 
@@ -271,56 +286,72 @@ The system tracks comprehensive metrics across both asset types:
 - [ ] **ETF Rotation**: Top-performing sector ETF rotation based on 3-month performance
 - [ ] **Golden Cross**: 50/200 day MA crossover strategy
 
-### 💰 **Phase 5: Options Trading** ❌ NOT STARTED
-
-- [ ] **Options Data Collection**: Real-time options chains from Alpaca
-- [ ] **Greeks Calculations**: Delta, Gamma, Theta, Vega analysis
-- [ ] **Covered Calls Strategy**: Income generation on equity positions
-- [ ] **Cash Secured Puts**: Quality stock acquisition at discounts
-- [ ] **Iron Condors**: Low volatility range-bound profit strategy
-- [ ] **Credit Spreads**: Directional income with technical bias
-- [ ] **Protective Puts**: Portfolio insurance during uncertainty
-
-### 📈 **Phase 6: Backtesting & Analysis** ❌ NOT STARTED
+### 📈 **Phase 5: Backtesting & Analysis** ❌ NOT STARTED
 
 - [ ] **Backtesting Engine**: Historical data replay with realistic fills
 - [ ] **Performance Metrics**: Sharpe ratio, max drawdown, win rate analysis
 - [ ] **Strategy Comparison**: Side-by-side performance evaluation
 - [ ] **Risk Analysis**: Portfolio-level risk assessment and stress testing
 
-### 🔗 **Phase 7: Broker Integration** ❌ NOT STARTED
+### 🔗 **Phase 6: Broker Integration** ❌ NOT STARTED
 
-- [ ] **Alpaca API**: Paper trading integration for both equity and options
+- [ ] **Alpaca API**: Paper trading integration
 - [ ] **Order Management**: Limit orders, stop losses, bracket orders
 - [ ] **Real-time Data**: Live market data feeds for signal generation
 - [ ] **Trade Execution**: Automated order placement with safety checks
 
-### 🎛️ **Phase 8: Portfolio Management** ❌ NOT STARTED
+### 🎛️ **Phase 7: Portfolio Management** ❌ NOT STARTED
 
-- [ ] **Asset Allocation**: Dynamic rebalancing between equity/options (60-80% / 20-40%)
 - [ ] **Risk Controls**: Portfolio-level circuit breakers and position limits
 - [ ] **Tax Optimization**: Long-term vs short-term gains management
 - [ ] **Performance Reporting**: Comprehensive strategy and portfolio analytics
+- [ ] **Rebalancing**: Automated portfolio rebalancing between strategies
 
 ### 🔄 **Current Priorities**
 
 **NEXT UP**:
 
-1. **Test Complete Pipeline** - Validate strategy signals with existing database data
-2. **Implement Alpha Vantage** - Alternative data source to address rate limiting
-3. **Build Backtesting Framework** - Historical strategy validation and performance metrics
-4. **Complete Remaining Equity Strategies** - Deep Value, ETF Rotation, Golden Cross
+1. **Complete Remaining Equity Strategies** - Deep Value, ETF Rotation, Golden Cross
+2. **Build Backtesting Framework** - Historical strategy validation and performance metrics
+3. **Implement Alpha Vantage** - Alternative data source for enhanced reliability
+4. **Portfolio Risk Management** - Complete risk management system implementation
 
 ### 🔧 **Known Issues**
 
-- **Yahoo Finance Rate Limiting**: Enhanced protection implemented but still encounters limits
-- **Limited Historical Data**: Only ~20 records in database, need more for strategy testing
-- **No Real Broker Connection**: Currently theoretical - need Alpaca integration for live trading
+- **Rate Limiting**: Yahoo Finance API has rate limits that may cause delays during initial data collection
+- **Data Quality**: Some data cleaning rules may need refinement based on actual market data patterns
+- **Strategy Testing**: Need comprehensive backtesting before live deployment
+
+## Operational Schedule
+
+- **Daily**: Automated data collection and storage
+- **Weekly (Weekend)**: Strategy calculations and signal generation
+- **Weekly (Monday)**: Order placement for the coming week
+- **Monthly**: Performance review and strategy adjustment
+- **Quarterly**: Tax optimization review
+
+## Success Criteria
+
+### Year 1 Success Metrics
+
+- **Profitability**: Outperform high-yield savings accounts (>4% annual return)
+- **Risk Management**: Maximum drawdown less than 15% at any point
+- **Strategy Performance**: At least 2 of the 4 strategies showing positive returns
+- **Automation**: System operating with minimal manual intervention
+
+### Future Expansion
+
+As the account grows and strategies prove successful:
+
+- Increase capital allocation
+- Develop more sophisticated machine learning models
+- Expand data sources to include alternative data
+- Explore additional asset classes (REITs, international ETFs)
 
 ## Contributing
 
-This is a personal project, but suggestions and improvements are welcome.
+This is a personal algorithmic trading system designed for educational and investment purposes. The codebase follows Python best practices and includes comprehensive testing.
 
 ## License
 
-MIT License
+This project is for personal use only. Please ensure compliance with all applicable financial regulations and broker terms of service.
