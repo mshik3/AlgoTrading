@@ -20,7 +20,12 @@ from data import (
     save_symbol,
     log_collection_start,
     log_collection_end,
+    MarketData,
 )
+
+# Import strategy components
+from strategies.equity.golden_cross import GoldenCrossStrategy
+from backtesting import BacktestingEngine, PerformanceMetrics
 
 # Import validation utilities
 try:
@@ -349,6 +354,207 @@ def run_data_collection(engine=None, symbols=None, period="5y", force_update=Fal
     return success_rate >= 0.5
 
 
+def run_strategy_backtest(
+    engine=None, strategy_name="golden_cross", symbols=None, period_years=3
+):
+    """
+    Run backtesting for a specific strategy.
+
+    Args:
+        engine: SQLAlchemy engine
+        strategy_name: Name of strategy to test ('golden_cross')
+        symbols: List of symbols to test on (defaults to strategy defaults)
+        period_years: Number of years of historical data to test
+
+    Returns:
+        BacktestResult object or None if failed
+    """
+    if engine is None:
+        engine = initialize_database()
+        if engine is None:
+            return None
+
+    session = get_session(engine)
+
+    try:
+        logger.info(f"Starting backtest for {strategy_name} strategy")
+
+        # Initialize strategy
+        if strategy_name == "golden_cross":
+            strategy = GoldenCrossStrategy(symbols=symbols)
+        else:
+            logger.error(f"Unknown strategy: {strategy_name}")
+            return None
+
+        # Use strategy symbols if none provided
+        test_symbols = symbols if symbols else strategy.symbols
+
+        # Load historical data
+        market_data = {}
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=period_years * 365)
+
+        for symbol in test_symbols:
+            query = (
+                session.query(MarketData)
+                .filter(
+                    MarketData.symbol == symbol,
+                    MarketData.date >= start_date,
+                    MarketData.date <= end_date,
+                )
+                .order_by(MarketData.date)
+            )
+
+            data = []
+            for record in query.all():
+                data.append(
+                    {
+                        "Date": record.date,
+                        "Open": record.open,
+                        "High": record.high,
+                        "Low": record.low,
+                        "Close": record.close,
+                        "Volume": record.volume,
+                        "Adj Close": record.adjusted_close,
+                    }
+                )
+
+            if data:
+                df = pd.DataFrame(data)
+                df.set_index("Date", inplace=True)
+                market_data[symbol] = df
+                logger.info(f"Loaded {len(df)} records for {symbol}")
+            else:
+                logger.warning(f"No historical data found for {symbol}")
+
+        if not market_data:
+            logger.error("No market data available for backtesting")
+            return None
+
+        # Run backtest
+        backtest_engine = BacktestingEngine(
+            initial_capital=10000,
+            commission_per_trade=0.0,
+            slippage_pct=0.001,
+        )
+
+        result = backtest_engine.run_backtest(
+            strategy=strategy,
+            market_data=market_data,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        # Print summary
+        logger.info(
+            f"Backtest completed: {result.total_return_pct:.2f}% return over {period_years} years"
+        )
+        logger.info(f"Total trades: {len(result.trades)}")
+
+        if result.performance_metrics.get("sharpe_ratio"):
+            logger.info(
+                f"Sharpe ratio: {result.performance_metrics['sharpe_ratio']:.2f}"
+            )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Backtest failed: {str(e)}")
+        return None
+    finally:
+        session.close()
+
+
+def run_strategy_signals(engine=None, strategy_name="golden_cross", symbols=None):
+    """
+    Generate current trading signals for a strategy.
+
+    Args:
+        engine: SQLAlchemy engine
+        strategy_name: Name of strategy ('golden_cross')
+        symbols: List of symbols to analyze
+
+    Returns:
+        List of StrategySignal objects
+    """
+    if engine is None:
+        engine = initialize_database()
+        if engine is None:
+            return []
+
+    session = get_session(engine)
+
+    try:
+        # Initialize strategy
+        if strategy_name == "golden_cross":
+            strategy = GoldenCrossStrategy(symbols=symbols)
+        else:
+            logger.error(f"Unknown strategy: {strategy_name}")
+            return []
+
+        # Use strategy symbols if none provided
+        test_symbols = symbols if symbols else strategy.symbols
+
+        # Load recent market data (need enough for 200-day MA)
+        market_data = {}
+        days_needed = 250  # Buffer for 200-day MA calculation
+
+        for symbol in test_symbols:
+            query = (
+                session.query(MarketData)
+                .filter(MarketData.symbol == symbol)
+                .order_by(MarketData.date.desc())
+                .limit(days_needed)
+            )
+
+            data = []
+            for record in query.all():
+                data.append(
+                    {
+                        "Date": record.date,
+                        "Open": record.open,
+                        "High": record.high,
+                        "Low": record.low,
+                        "Close": record.close,
+                        "Volume": record.volume,
+                        "Adj Close": record.adjusted_close,
+                    }
+                )
+
+            if data:
+                df = pd.DataFrame(data)
+                df.set_index("Date", inplace=True)
+                df.sort_index(inplace=True)  # Ensure chronological order
+                market_data[symbol] = df
+                logger.info(f"Loaded {len(df)} recent records for {symbol}")
+
+        if not market_data:
+            logger.warning("No market data available for signal generation")
+            return []
+
+        # Generate signals
+        signals = strategy.generate_signals(market_data)
+
+        # Log signals
+        if signals:
+            logger.info(f"Generated {len(signals)} signals:")
+            for signal in signals:
+                logger.info(
+                    f"  {signal.symbol} {signal.signal_type.value} "
+                    f"(confidence: {signal.confidence:.2f})"
+                )
+        else:
+            logger.info("No trading signals generated")
+
+        return signals
+
+    except Exception as e:
+        logger.error(f"Signal generation failed: {str(e)}")
+        return []
+    finally:
+        session.close()
+
+
 def main():
     """Main entry point for the pipeline with input validation."""
     # Load environment configuration first
@@ -366,9 +572,18 @@ def main():
     parser = argparse.ArgumentParser(description="Algorithmic Trading Pipeline")
     parser.add_argument(
         "--task",
-        choices=["collect", "analyze", "backtest", "trade"],
+        choices=["collect", "analyze", "backtest", "trade", "signals"],
         default="collect",
         help="Task to perform",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["golden_cross"],
+        default="golden_cross",
+        help="Strategy to use for backtesting/signals",
+    )
+    parser.add_argument(
+        "--years", type=int, default=3, help="Years of historical data for backtesting"
     )
     parser.add_argument(
         "--symbols", nargs="+", help="Symbols to process (e.g. AAPL MSFT)"
@@ -408,6 +623,18 @@ def main():
                 force_update=args.force,
             )
             return 0 if success else 1
+        elif args.task == "backtest":
+            result = run_strategy_backtest(
+                strategy_name=args.strategy,
+                symbols=validated_symbols,
+                period_years=args.years,
+            )
+            return 0 if result else 1
+        elif args.task == "signals":
+            signals = run_strategy_signals(
+                strategy_name=args.strategy, symbols=validated_symbols
+            )
+            return 0
         else:
             logger.error(f"Task '{args.task}' not implemented yet")
             return 1
