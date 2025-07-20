@@ -1,6 +1,6 @@
 """
 Technical indicators package for the algorithmic trading system.
-Provides technical analysis tools for equity and options strategies.
+Provides technical analysis tools for equity strategies.
 """
 
 from .technical import (

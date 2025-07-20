@@ -1,6 +1,6 @@
 """
 Data package for the algorithmic trading system.
-Handles data collection, processing, and storage.
+Handles equity market data collection, processing, and storage.
 """
 
 from .collectors import get_collector, YahooFinanceCollector, AlphaVantageCollector
