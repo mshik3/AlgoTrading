@@ -3,20 +3,20 @@ Professional Algorithmic Trading Dashboard
 Built with Plotly Dash - Industry-grade financial dashboard
 """
 
-import dash
-from dash import dcc, html, Input, Output, State, callback_context, dash_table
-import dash_bootstrap_components as dbc
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
 import sys
 import os
 
-# Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path for imports - ensure this happens before any other imports
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+import dash
+from dash import dcc, html, Input, Output, dash_table
+import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
+import pandas as pd
+from datetime import datetime, timedelta
 
 # Import analysis components
 from dashboard.components.analysis import (
@@ -567,7 +567,7 @@ def create_portfolio_chart():
     """Create the portfolio performance chart"""
     try:
         # Get real portfolio history from Alpaca
-        from .data.live_data import LiveDataManager
+        from dashboard.data.live_data import LiveDataManager
 
         live_data = LiveDataManager()
         history_df = live_data.get_portfolio_history(days=30)

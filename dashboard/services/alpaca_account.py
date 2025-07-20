@@ -6,14 +6,15 @@ Connects to actual Alpaca API to get real account data and positions.
 import sys
 import os
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-import pandas as pd
+from datetime import datetime
+from typing import Dict, List
 
-# Add project root to path
-sys.path.append(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path - more robust path resolution
+project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # Import project modules
 from utils.config import load_environment, get_env_var
@@ -245,8 +246,6 @@ class AlpacaAccountService:
         # This would be populated by the analysis service
         # For now, return empty list - signals will come from analysis
         return []
-
-
 
     def is_connected(self) -> bool:
         """

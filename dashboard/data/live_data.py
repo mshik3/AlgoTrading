@@ -85,7 +85,8 @@ class LiveDataManager:
 
         try:
             # Use Alpaca account service instead of paper trader
-            from .services.alpaca_account import AlpacaAccountService
+            from dashboard.services.alpaca_account import AlpacaAccountService
+
             alpaca_service = AlpacaAccountService()
             summary = alpaca_service.get_account_summary()
 
@@ -112,7 +113,8 @@ class LiveDataManager:
 
         try:
             # Use Alpaca account service instead of paper trader
-            from .services.alpaca_account import AlpacaAccountService
+            from dashboard.services.alpaca_account import AlpacaAccountService
+
             alpaca_service = AlpacaAccountService()
             positions = alpaca_service.get_positions()
 
@@ -183,24 +185,26 @@ class LiveDataManager:
 
         try:
             # Use Alpaca for portfolio history
-            from .services.alpaca_account import AlpacaAccountService
+            from dashboard.services.alpaca_account import AlpacaAccountService
+
             alpaca_service = AlpacaAccountService()
-            
+
             # For now, return a simple linear progression based on current portfolio value
             # TODO: Implement actual historical portfolio data from Alpaca
             account_summary = alpaca_service.get_account_summary()
             current_value = account_summary.get("total_value", 100000)
-            
+
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days)
             dates = pd.date_range(start=start_date, end=end_date, freq="D")
-            
+
             # Simple linear progression (placeholder)
-            values = [current_value * 0.95 + (current_value * 0.05 * i / len(dates)) for i in range(len(dates))]
-            
-            history_df = pd.DataFrame(
-                {"date": dates, "portfolio_value": values}
-            )
+            values = [
+                current_value * 0.95 + (current_value * 0.05 * i / len(dates))
+                for i in range(len(dates))
+            ]
+
+            history_df = pd.DataFrame({"date": dates, "portfolio_value": values})
 
             if self.cache:
                 self.cache.set(cache_key, history_df, timeout=300)
@@ -304,17 +308,18 @@ class LiveDataManager:
 
         try:
             # Use Alpaca for strategy performance
-            from .services.alpaca_account import AlpacaAccountService
+            from dashboard.services.alpaca_account import AlpacaAccountService
+
             alpaca_service = AlpacaAccountService()
-            
+
             # Get recent transactions to calculate strategy performance
             recent_orders = alpaca_service.get_recent_orders(limit=50)
-            
+
             # Calculate basic metrics from recent trades
             total_trades = len(recent_orders)
             buy_trades = len([o for o in recent_orders if o.get("action") == "buy"])
             sell_trades = len([o for o in recent_orders if o.get("action") == "sell"])
-            
+
             performance = {
                 "name": "Golden Cross Strategy",
                 "status": "ACTIVE" if alpaca_service.is_connected() else "DISCONNECTED",

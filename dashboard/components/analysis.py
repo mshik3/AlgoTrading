@@ -12,11 +12,7 @@ from datetime import datetime
 import pandas as pd
 
 # Import the analysis service
-import sys
-import os
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from services.analysis_service import DashboardAnalysisService
+from dashboard.services.analysis_service import DashboardAnalysisService
 
 
 def create_analysis_layout():
