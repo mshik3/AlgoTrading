@@ -74,13 +74,13 @@ def mock_environment():
 
 
 @pytest.fixture
-def mock_yfinance_data(sample_market_data):
-    """Mock yfinance data download."""
-    mock_ticker = Mock()
-    mock_ticker.history.return_value = sample_market_data
+def mock_alpaca_data(sample_market_data):
+    """Mock Alpaca data download."""
+    mock_client = Mock()
+    mock_client.get_stock_bars.return_value = sample_market_data
 
-    with patch("yfinance.Ticker", return_value=mock_ticker):
-        yield mock_ticker
+    with patch("alpaca.data.StockHistoricalDataClient", return_value=mock_client):
+        yield mock_client
 
 
 class TestConfig:

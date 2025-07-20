@@ -83,11 +83,7 @@ class BacktestingEngine:
         self.slippage_pct = slippage_pct
         self.min_cash_reserve = min_cash_reserve
 
-        # Backtesting state
-        self.current_capital = initial_capital
-        self.current_cash = initial_capital
-        self.current_positions = {}  # symbol -> {"quantity": int, "avg_price": float}
-        self.portfolio_values = []
+        # Backtesting state - simplified for strategy testing only
         self.completed_trades = []
         self.all_signals = []
 
@@ -154,22 +150,15 @@ class BacktestingEngine:
                 logger.error(f"Error simulating trading day {date}: {str(e)}")
                 continue
 
-        # Calculate final results
-        final_capital = self._calculate_portfolio_value(
-            filtered_data, trading_dates[-1]
-        )
-        total_return = final_capital - self.initial_capital
-        total_return_pct = (total_return / self.initial_capital) * 100
+        # Calculate final results - simplified for strategy testing
+        total_return = 0.0
+        total_return_pct = 0.0
+        final_capital = self.initial_capital
 
         # Generate performance metrics
-        daily_values = pd.Series(
-            [pv["total_value"] for pv in self.portfolio_values],
-            index=[pv["date"] for pv in self.portfolio_values],
-        )
-
         metrics_calculator = PerformanceMetrics()
         performance_metrics = metrics_calculator.calculate_all_metrics(
-            daily_values, self.completed_trades
+            pd.Series(), self.completed_trades
         )
 
         result = BacktestResult(
@@ -193,10 +182,6 @@ class BacktestingEngine:
 
     def _reset_state(self):
         """Reset the backtesting engine state."""
-        self.current_capital = self.initial_capital
-        self.current_cash = self.initial_capital
-        self.current_positions = {}
-        self.portfolio_values = []
         self.completed_trades = []
         self.all_signals = []
 
@@ -248,16 +233,7 @@ class BacktestingEngine:
         except Exception as e:
             logger.error(f"Error generating/executing signals on {date}: {str(e)}")
 
-        # Update portfolio value
-        portfolio_value = self._calculate_portfolio_value(market_data, date)
-        self.portfolio_values.append(
-            {
-                "date": date,
-                "total_value": portfolio_value,
-                "cash": self.current_cash,
-                "positions_value": portfolio_value - self.current_cash,
-            }
-        )
+        # Note: Portfolio value tracking removed - use Alpaca for real portfolio data
 
     def _execute_signal(
         self,
@@ -265,161 +241,56 @@ class BacktestingEngine:
         market_data: Dict[str, pd.DataFrame],
         date: datetime,
     ):
-        """Execute a trading signal with realistic simulation."""
+        """Execute a trading signal - simplified for strategy testing."""
         symbol = signal.symbol
 
-        # Get current price (use close price for simplicity)
+        # Get current price for the symbol
         if symbol not in market_data or date not in market_data[symbol].index:
             logger.warning(f"No price data for {symbol} on {date}")
             return
 
         current_price = market_data[symbol].loc[date, "Close"]
 
-        # Apply slippage
-        if signal.signal_type == SignalType.BUY:
-            execution_price = current_price * (1 + self.slippage_pct)
-        else:
-            execution_price = current_price * (1 - self.slippage_pct)
-
-        if signal.signal_type == SignalType.BUY:
-            self._execute_buy_signal(signal, execution_price, date)
-        elif signal.signal_type in [SignalType.SELL, SignalType.CLOSE_LONG]:
-            self._execute_sell_signal(signal, execution_price, date)
+        # Record signal for analysis (no actual execution in backtesting)
+        logger.info(f"Signal generated: {signal.signal_type} {symbol} @ ${current_price:.2f} on {date}")
+        
+        # Add to completed trades for metrics calculation
+        if signal.signal_type in [SignalType.BUY, SignalType.SELL]:
+            # Simplified trade recording for strategy analysis
+            trade = BacktestTrade(
+                symbol=symbol,
+                entry_date=date,
+                exit_date=date,
+                entry_price=current_price,
+                exit_price=current_price,
+                quantity=signal.quantity or 100,
+                strategy_name=signal.strategy_name,
+                entry_signal=signal,
+                exit_signal=signal,
+                profit_loss=0.0,  # No P&L calculation in simplified backtesting
+                profit_loss_pct=0.0,
+                holding_period_days=0,
+            )
+            self.completed_trades.append(trade)
 
     def _execute_buy_signal(self, signal: StrategySignal, price: float, date: datetime):
-        """Execute a buy signal."""
-        symbol = signal.symbol
-
-        # Calculate position size based on available cash and risk management
-        available_cash = self.current_cash - self.min_cash_reserve
-        if available_cash <= 0:
-            logger.warning(f"Insufficient cash to buy {symbol}")
-            return
-
-        # Use signal quantity if provided, otherwise calculate based on portfolio percentage
-        if signal.quantity:
-            quantity = signal.quantity
-        else:
-            # Default to using available cash with maximum position size constraint
-            max_position_value = self.current_capital * 0.3  # 30% max position
-            position_value = min(available_cash, max_position_value)
-            quantity = int(position_value / price)
-
-        if quantity <= 0:
-            logger.warning(f"Cannot buy {symbol}: quantity={quantity}")
-            return
-
-        trade_value = quantity * price + self.commission_per_trade
-
-        if trade_value > available_cash:
-            # Reduce quantity to fit available cash
-            quantity = int((available_cash - self.commission_per_trade) / price)
-            if quantity <= 0:
-                logger.warning(f"Insufficient cash to buy even 1 share of {symbol}")
-                return
-            trade_value = quantity * price + self.commission_per_trade
-
-        # Execute the trade
-        self.current_cash -= trade_value
-
-        if symbol in self.current_positions:
-            # Add to existing position
-            existing_quantity = self.current_positions[symbol]["quantity"]
-            existing_avg_price = self.current_positions[symbol]["avg_price"]
-
-            new_quantity = existing_quantity + quantity
-            new_avg_price = (
-                (existing_quantity * existing_avg_price) + (quantity * price)
-            ) / new_quantity
-
-            self.current_positions[symbol] = {
-                "quantity": new_quantity,
-                "avg_price": new_avg_price,
-                "entry_date": self.current_positions[symbol]["entry_date"],
-                "entry_signal": self.current_positions[symbol]["entry_signal"],
-            }
-        else:
-            # New position
-            self.current_positions[symbol] = {
-                "quantity": quantity,
-                "avg_price": price,
-                "entry_date": date,
-                "entry_signal": signal,
-            }
-
-        logger.debug(f"BUY: {quantity} shares of {symbol} at ${price:.2f} on {date}")
+        """Execute a buy signal - simplified for strategy testing."""
+        # Note: Actual execution removed - use Alpaca for real trading
+        logger.debug(f"BUY signal recorded: {signal.symbol} @ ${price:.2f} on {date}")
 
     def _execute_sell_signal(
         self, signal: StrategySignal, price: float, date: datetime
     ):
-        """Execute a sell signal."""
-        symbol = signal.symbol
-
-        if symbol not in self.current_positions:
-            logger.warning(f"Cannot sell {symbol}: no position exists")
-            return
-
-        position = self.current_positions[symbol]
-        quantity_to_sell = signal.quantity if signal.quantity else position["quantity"]
-        quantity_to_sell = min(quantity_to_sell, position["quantity"])
-
-        if quantity_to_sell <= 0:
-            return
-
-        # Execute the trade
-        trade_value = quantity_to_sell * price - self.commission_per_trade
-        self.current_cash += trade_value
-
-        # Calculate P&L
-        profit_loss = (
-            price - position["avg_price"]
-        ) * quantity_to_sell - self.commission_per_trade
-        profit_loss_pct = (
-            profit_loss / (position["avg_price"] * quantity_to_sell)
-        ) * 100
-        holding_period = (date - position["entry_date"]).days
-
-        # Record completed trade
-        trade = BacktestTrade(
-            symbol=symbol,
-            entry_date=position["entry_date"],
-            exit_date=date,
-            entry_price=position["avg_price"],
-            exit_price=price,
-            quantity=quantity_to_sell,
-            strategy_name=signal.strategy_name,
-            entry_signal=position["entry_signal"],
-            exit_signal=signal,
-            profit_loss=profit_loss,
-            profit_loss_pct=profit_loss_pct,
-            holding_period_days=holding_period,
-        )
-        self.completed_trades.append(trade)
-
-        # Update position
-        remaining_quantity = position["quantity"] - quantity_to_sell
-        if remaining_quantity <= 0:
-            del self.current_positions[symbol]
-        else:
-            self.current_positions[symbol]["quantity"] = remaining_quantity
-
-        logger.debug(
-            f"SELL: {quantity_to_sell} shares of {symbol} at ${price:.2f} on {date}, P&L: ${profit_loss:.2f}"
-        )
+        """Execute a sell signal - simplified for strategy testing."""
+        # Note: Actual execution removed - use Alpaca for real trading
+        logger.debug(f"SELL signal recorded: {signal.symbol} @ ${price:.2f} on {date}")
 
     def _calculate_portfolio_value(
         self, market_data: Dict[str, pd.DataFrame], date: datetime
     ) -> float:
         """Calculate total portfolio value on a given date."""
-        total_value = self.current_cash
-
-        for symbol, position in self.current_positions.items():
-            if symbol in market_data and date in market_data[symbol].index:
-                current_price = market_data[symbol].loc[date, "Close"]
-                position_value = position["quantity"] * current_price
-                total_value += position_value
-
-        return total_value
+        # Note: Portfolio calculation removed - use Alpaca for real portfolio data
+        return self.initial_capital
 
     def get_trade_summary(self) -> Dict[str, Any]:
         """Get a summary of all completed trades."""

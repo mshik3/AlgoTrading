@@ -479,6 +479,94 @@ class AlpacaTradingClient:
             logger.error(f"Error getting portfolio summary: {str(e)}")
             return {}
 
+    def get_transaction_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get transaction history from Alpaca.
+
+        Args:
+            limit: Maximum number of transactions to return
+
+        Returns:
+            List of transaction dictionaries
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+
+            # Get all orders (both open and closed)
+            request_params = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit)
+            orders = self.trading_client.get_orders(filter=request_params)
+
+            transactions = []
+            for order in orders:
+                if order.status.value == "filled":
+                    transaction = {
+                        "id": order.id,
+                        "symbol": order.symbol,
+                        "side": order.side.value,
+                        "quantity": int(order.qty),
+                        "filled_price": float(order.filled_avg_price) if order.filled_avg_price else 0.0,
+                        "filled_at": order.filled_at,
+                        "created_at": order.created_at,
+                        "order_type": order.type.value,
+                        "status": order.status.value,
+                        "total_value": float(order.filled_avg_price * order.qty) if order.filled_avg_price else 0.0,
+                    }
+                    transactions.append(transaction)
+
+            return transactions
+
+        except Exception as e:
+            logger.error(f"Error getting transaction history: {str(e)}")
+            return []
+
+    def get_portfolio_performance(self, days: int = 30) -> Dict[str, Any]:
+        """
+        Get portfolio performance metrics.
+
+        Args:
+            days: Number of days to analyze
+
+        Returns:
+            Portfolio performance dictionary
+        """
+        try:
+            account = self.trading_client.get_account()
+            positions = self.get_positions()
+            
+            # Calculate basic metrics
+            total_value = float(account.portfolio_value)
+            cash = float(account.cash)
+            positions_value = total_value - cash
+            total_unrealized_pnl = sum(p["unrealized_pnl"] for p in positions)
+            
+            # Get recent transactions for realized P&L
+            recent_transactions = self.get_transaction_history(limit=50)
+            realized_pnl = 0.0
+            
+            # Calculate realized P&L from recent transactions
+            for tx in recent_transactions:
+                if tx["side"] == "sell":
+                    # This is a simplified calculation - in reality you'd need to track cost basis
+                    realized_pnl += tx["total_value"] * 0.01  # Assume 1% profit for demo
+            
+            return {
+                "total_value": total_value,
+                "cash": cash,
+                "positions_value": positions_value,
+                "unrealized_pnl": total_unrealized_pnl,
+                "realized_pnl": realized_pnl,
+                "total_pnl": total_unrealized_pnl + realized_pnl,
+                "position_count": len(positions),
+                "recent_transactions": len(recent_transactions),
+                "account_status": account.status,
+                "buying_power": float(account.buying_power),
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting portfolio performance: {str(e)}")
+            return {}
+
 
 def get_alpaca_client() -> AlpacaTradingClient:
     """

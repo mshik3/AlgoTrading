@@ -1,9 +1,9 @@
 """
 Data package for the algorithmic trading system.
-Handles equity market data collection, processing, and storage.
+Handles market data collection from Alpaca, processing, and storage.
 """
 
-from .collectors import get_collector, YahooFinanceCollector, AlphaVantageCollector
+from .collectors import get_collector, AlpacaDataCollector
 from .processors import DataProcessor, DataValidator, DataCleaner
 from .storage import (
     MarketData,
@@ -22,8 +22,7 @@ from .storage import (
 
 __all__ = [
     "get_collector",
-    "YahooFinanceCollector",
-    "AlphaVantageCollector",
+    "AlpacaDataCollector",
     "DataProcessor",
     "DataValidator",
     "DataCleaner",

@@ -3,7 +3,6 @@ sqlalchemy==2.0.40
 psycopg2-binary==2.9.10
 pandas==2.2.3
 numpy==2.2.5
-yfinance==0.2.55
 matplotlib==3.10.1
 psutil==6.1.0
 

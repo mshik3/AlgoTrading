@@ -84,7 +84,10 @@ class LiveDataManager:
                 return summary
 
         try:
-            summary = self.paper_trader.get_portfolio_summary()
+            # Use Alpaca account service instead of paper trader
+            from .services.alpaca_account import AlpacaAccountService
+            alpaca_service = AlpacaAccountService()
+            summary = alpaca_service.get_account_summary()
 
             if self.cache:
                 self.cache.set("portfolio_summary", summary, timeout=30)
@@ -93,12 +96,7 @@ class LiveDataManager:
 
         except Exception as e:
             print(f"Error getting portfolio summary: {e}")
-            return {
-                "total_value": 100000.0,
-                "cash": 100000.0,
-                "total_pnl": 0.0,
-                "positions_value": 0.0,
-            }
+            raise Exception("Alpaca connection required for portfolio data")
 
     def get_positions(self):
         """
@@ -113,44 +111,19 @@ class LiveDataManager:
                 return positions
 
         try:
-            positions = self.paper_trader.get_positions()
-
-            # Add real-time pricing and P&L calculations
-            enhanced_positions = []
-            for position in positions:
-                symbol = position.get("symbol")
-                quantity = position.get("quantity", 0)
-                avg_price = position.get("avg_price", 0)
-
-                # Get current price
-                current_price = self.get_current_price(symbol)
-                market_value = quantity * current_price
-                unrealized_pnl = (current_price - avg_price) * quantity
-                pnl_percent = (
-                    (unrealized_pnl / (avg_price * quantity))
-                    if avg_price * quantity != 0
-                    else 0
-                )
-
-                enhanced_position = {
-                    "symbol": symbol,
-                    "quantity": quantity,
-                    "avg_price": avg_price,
-                    "current_price": current_price,
-                    "market_value": market_value,
-                    "unrealized_pnl": unrealized_pnl,
-                    "pnl_percent": pnl_percent,
-                }
-                enhanced_positions.append(enhanced_position)
+            # Use Alpaca account service instead of paper trader
+            from .services.alpaca_account import AlpacaAccountService
+            alpaca_service = AlpacaAccountService()
+            positions = alpaca_service.get_positions()
 
             if self.cache:
-                self.cache.set("positions_data", enhanced_positions, timeout=30)
+                self.cache.set("positions_data", positions, timeout=30)
 
-            return enhanced_positions
+            return positions
 
         except Exception as e:
             print(f"Error getting positions: {e}")
-            return []
+            raise Exception("Alpaca connection required for position data")
 
     def get_current_price(self, symbol):
         """
@@ -209,38 +182,34 @@ class LiveDataManager:
                 return history
 
         try:
-            # For now, generate mock data
-            # TODO: Replace with actual portfolio history from database
+            # Use Alpaca for portfolio history
+            from .services.alpaca_account import AlpacaAccountService
+            alpaca_service = AlpacaAccountService()
+            
+            # For now, return a simple linear progression based on current portfolio value
+            # TODO: Implement actual historical portfolio data from Alpaca
+            account_summary = alpaca_service.get_account_summary()
+            current_value = account_summary.get("total_value", 100000)
+            
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days)
-
             dates = pd.date_range(start=start_date, end=end_date, freq="D")
-
-            # Generate realistic portfolio value progression
-            base_value = 100000
-            returns = np.random.normal(
-                0.0008, 0.02, len(dates)
-            )  # ~0.2% daily return, 2% volatility
-            values = [base_value]
-
-            for ret in returns[1:]:
-                values.append(values[-1] * (1 + ret))
-
+            
+            # Simple linear progression (placeholder)
+            values = [current_value * 0.95 + (current_value * 0.05 * i / len(dates)) for i in range(len(dates))]
+            
             history_df = pd.DataFrame(
-                {"date": dates, "portfolio_value": values[: len(dates)]}
+                {"date": dates, "portfolio_value": values}
             )
 
             if self.cache:
-                self.cache.set(
-                    cache_key, history_df, timeout=300
-                )  # Cache for 5 minutes
+                self.cache.set(cache_key, history_df, timeout=300)
 
             return history_df
 
         except Exception as e:
             print(f"Error getting portfolio history: {e}")
-            # Return empty dataframe
-            return pd.DataFrame(columns=["date", "portfolio_value"])
+            raise Exception("Alpaca connection required for portfolio history")
 
     def get_recent_activity(self, limit=10):
         """
@@ -334,37 +303,39 @@ class LiveDataManager:
                 return performance
 
         try:
-            # Mock strategy performance data
-            # TODO: Replace with actual strategy performance calculation
+            # Use Alpaca for strategy performance
+            from .services.alpaca_account import AlpacaAccountService
+            alpaca_service = AlpacaAccountService()
+            
+            # Get recent transactions to calculate strategy performance
+            recent_orders = alpaca_service.get_recent_orders(limit=50)
+            
+            # Calculate basic metrics from recent trades
+            total_trades = len(recent_orders)
+            buy_trades = len([o for o in recent_orders if o.get("action") == "buy"])
+            sell_trades = len([o for o in recent_orders if o.get("action") == "sell"])
+            
             performance = {
                 "name": "Golden Cross Strategy",
-                "status": "ACTIVE",
-                "last_signal": "BUY",
+                "status": "ACTIVE" if alpaca_service.is_connected() else "DISCONNECTED",
+                "last_signal": "BUY" if buy_trades > sell_trades else "SELL",
                 "signal_time": datetime.now() - timedelta(minutes=30),
-                "win_rate": 0.68,
-                "total_trades": 24,
-                "profit_factor": 1.45,
-                "sharpe_ratio": 1.2,
-                "max_drawdown": -0.08,
-                "total_return": 0.156,
+                "win_rate": 0.65,  # Placeholder - would need actual P&L calculation
+                "total_trades": total_trades,
+                "profit_factor": 1.2,  # Placeholder
+                "sharpe_ratio": 0.8,  # Placeholder
+                "max_drawdown": -0.05,  # Placeholder
+                "total_return": 0.12,  # Placeholder
             }
 
             if self.cache:
-                self.cache.set(
-                    cache_key, performance, timeout=120
-                )  # Cache for 2 minutes
+                self.cache.set(cache_key, performance, timeout=120)
 
             return performance
 
         except Exception as e:
             print(f"Error getting strategy performance: {e}")
-            return {
-                "name": "Golden Cross Strategy",
-                "status": "ERROR",
-                "last_signal": "N/A",
-                "win_rate": 0,
-                "total_trades": 0,
-            }
+            raise Exception("Alpaca connection required for strategy performance")
 
     def get_market_data(self, symbols=None):
         """

@@ -205,7 +205,7 @@ def initialize_symbols(session, symbols=None):
 
 def collect_market_data(session, symbol, period="5y", force_update=False):
     """
-    Collect market data for a symbol with enhanced error handling.
+    Collect market data for a symbol using Alpaca.
 
     Args:
         session: SQLAlchemy session
@@ -216,12 +216,26 @@ def collect_market_data(session, symbol, period="5y", force_update=False):
     Returns:
         tuple: (new_records, updated_records, error_occurred)
     """
-    # Get collector and processor with rate limiting protection
-    collector = get_collector("yahoo")
+    # Get Alpaca API credentials
+    import os
+
+    api_key = os.getenv("ALPACA_API_KEY")
+    secret_key = os.getenv("ALPACA_SECRET_KEY")
+
+    if not api_key or not secret_key:
+        logger.error(
+            "Alpaca API credentials not found. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables."
+        )
+        return 0, 0, True
+
+    # Get Alpaca collector
+    collector = get_collector(
+        "alpaca", api_key=api_key, secret_key=secret_key, paper=True
+    )
     processor = DataProcessor()
 
     try:
-        # Fetch data with built-in rate limiting protection
+        # Fetch data from Alpaca
         market_data = collector.collect_and_transform(symbol, period=period)
 
         if not market_data:
@@ -237,14 +251,7 @@ def collect_market_data(session, symbol, period="5y", force_update=False):
         return new_records, updated_records, False
 
     except Exception as e:
-        error_msg = str(e)
-        if (
-            "rate limit" in error_msg.lower()
-            or "too many requests" in error_msg.lower()
-        ):
-            logger.error(f"Rate limiting encountered for {symbol}: {error_msg}")
-        else:
-            logger.error(f"Unexpected error collecting data for {symbol}: {error_msg}")
+        logger.error(f"Error collecting data for {symbol}: {str(e)}")
         return 0, 0, True
 
 

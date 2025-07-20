@@ -1,316 +1,279 @@
 """
 Data collectors module for the algorithmic trading system.
-Handles fetching data from various sources.
+Handles fetching data from Alpaca Markets API.
 """
 
 import logging
-import time
-import random
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Union
 import pandas as pd
-import yfinance as yf
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+
+# Alpaca SDK
+try:
+    from alpaca.data import (
+        StockHistoricalDataClient,
+        CryptoHistoricalDataClient,
+        TimeFrame,
+    )
+    from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
+
+    ALPACA_AVAILABLE = True
+except ImportError:
+    ALPACA_AVAILABLE = False
+    logging.warning("Alpaca SDK not installed. Install with: pip install alpaca-py")
+
 from .storage import MarketData
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# User agents for rotation to avoid rate limiting
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/91.0.864.59",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
-]
 
+class AlpacaDataCollector:
+    """
+    High-quality data collector using Alpaca Markets API.
 
-class YahooFinanceCollector:
-    """Collector for Yahoo Finance data with rate limiting protection."""
+    Advantages:
+    - No rate limiting issues
+    - Direct exchange data
+    - Real-time capabilities
+    - Perfect integration with Alpaca trading
+    - Professional-grade reliability
+    """
 
-    def __init__(self, delay_range=(1, 3), max_retries=3, backoff_factor=2):
+    def __init__(self, api_key: str, secret_key: str, paper: bool = True):
         """
-        Initialize the Yahoo Finance collector with rate limiting protection.
+        Initialize Alpaca data collector.
 
         Args:
-            delay_range: Tuple of (min, max) seconds to wait between requests
-            max_retries: Maximum number of retry attempts for failed requests
-            backoff_factor: Multiplier for exponential backoff between retries
+            api_key: Alpaca API key
+            secret_key: Alpaca secret key
+            paper: Whether to use paper trading data
         """
-        self.source_name = "Yahoo Finance"
-        self.delay_range = delay_range
-        self.max_retries = max_retries
-        self.backoff_factor = backoff_factor
-        self.session = self._create_session()
-        self.last_request_time = 0
+        self.api_key = api_key
+        self.secret_key = secret_key
+        self.paper = paper
+        self.stock_client = None
+        self.crypto_client = None
 
-    def _create_session(self):
-        """Create a configured requests session with retry strategy."""
-        session = requests.Session()
-
-        # Configure retry strategy
-        retry_strategy = Retry(
-            total=self.max_retries,
-            backoff_factor=self.backoff_factor,
-            status_forcelist=[429, 500, 502, 503, 504],  # HTTP status codes to retry
-            allowed_methods=["GET"],
-        )
-
-        adapter = HTTPAdapter(
-            max_retries=retry_strategy, pool_connections=10, pool_maxsize=20
-        )
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
-        # Set random user agent
-        session.headers.update(
-            {
-                "User-Agent": random.choice(USER_AGENTS),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                "Connection": "keep-alive",
-                "Cache-Control": "no-cache",
-            }
-        )
-
-        return session
-
-    def _rate_limit_delay(self):
-        """Implement rate limiting with random delays."""
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-
-        # Calculate delay needed
-        min_delay, max_delay = self.delay_range
-        required_delay = random.uniform(min_delay, max_delay)
-
-        if time_since_last < required_delay:
-            sleep_time = required_delay - time_since_last
-            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
-            time.sleep(sleep_time)
-
-        self.last_request_time = time.time()
-
-    def _retry_with_backoff(self, func, *args, **kwargs):
-        """Retry a function with exponential backoff."""
-        for attempt in range(self.max_retries + 1):
-            try:
-                self._rate_limit_delay()
-                return func(*args, **kwargs)
-            except Exception as e:
-                if (
-                    "rate limit" in str(e).lower()
-                    or "too many requests" in str(e).lower()
-                ):
-                    if attempt < self.max_retries:
-                        backoff_time = (
-                            self.backoff_factor**attempt
-                        ) * random.uniform(5, 10)
-                        logger.warning(
-                            f"Rate limited, backing off for {backoff_time:.2f} seconds (attempt {attempt + 1}/{self.max_retries + 1})"
-                        )
-                        time.sleep(backoff_time)
-
-                        # Rotate user agent for next attempt
-                        self.session.headers.update(
-                            {"User-Agent": random.choice(USER_AGENTS)}
-                        )
-                        continue
-                    else:
-                        logger.error(f"Max retries exceeded due to rate limiting")
-                        raise
-                else:
-                    # Non-rate limiting error, re-raise immediately
-                    raise
-
-        return None
-
-    def fetch_daily_data(self, symbol, start_date=None, end_date=None, period=None):
-        """
-        Fetch daily OHLCV data for a symbol from Yahoo Finance with rate limiting protection.
-
-        Args:
-            symbol (str): The ticker symbol to fetch data for
-            start_date (datetime or str): Start date for data collection
-            end_date (datetime or str): End date for data collection
-            period (str): Optional period string (e.g., "5y" for 5 years) instead of dates
-
-        Returns:
-            pandas.DataFrame: DataFrame with the OHLCV data
-        """
-
-        def _fetch_data():
-            logger.info(f"Fetching data for {symbol} from {self.source_name}")
-
-            if not end_date:
-                end_date_val = datetime.now()
-            else:
-                end_date_val = end_date
-
-            if not start_date and not period:
-                # Default to 5 years of data if no start_date or period provided
-                start_date_val = end_date_val - timedelta(days=5 * 365)
-            else:
-                start_date_val = start_date
-
-            # Create ticker with our configured session
-            # Remove any $ prefix if present
-            clean_symbol = symbol.replace("$", "")
-            ticker = yf.Ticker(clean_symbol, session=self.session)
-
-            # Fetch data
-            if period:
-                data = ticker.history(period=period, auto_adjust=True)
-            else:
-                data = ticker.history(
-                    start=start_date_val,
-                    end=end_date_val,
-                    auto_adjust=True,
-                )
-
-            if data.empty:
-                logger.warning(f"No data found for {symbol}")
-                return None
-
-            # Handle MultiIndex columns if present
-            if isinstance(data.columns, pd.MultiIndex):
-                logger.info(f"MultiIndex detected, flattening DataFrame for {symbol}")
-                # If we have a MultiIndex due to multiple tickers, select just this ticker
-                if len(data.columns.levels) > 1 and symbol in data.columns.levels[1]:
-                    data = data.xs(symbol, level=1, axis=1)
-                else:
-                    # If it's a different MultiIndex structure, flatten it
-                    data.columns = [col[0] for col in data.columns]
-
-            # Make sure all necessary columns are present
-            required_columns = ["Open", "High", "Low", "Close", "Volume"]
-            adj_close_column = (
-                "Adj Close"
-                if "Adj Close" in data.columns
-                else "Adj_Close" if "Adj_Close" in data.columns else None
+        if ALPACA_AVAILABLE:
+            self.stock_client = StockHistoricalDataClient(
+                api_key=api_key, secret_key=secret_key
+            )
+            self.crypto_client = CryptoHistoricalDataClient(
+                api_key=api_key, secret_key=secret_key
             )
 
-            if not all(col in data.columns for col in required_columns):
-                missing = [col for col in required_columns if col not in data.columns]
-                logger.error(f"Missing required columns for {symbol}: {missing}")
+        # Crypto symbols mapping (Alpaca uses different symbols for crypto)
+        self.crypto_symbols = {
+            "BTCUSD": "BTC/USD",
+            "ETHUSD": "ETH/USD",
+            "ADAUSD": "ADA/USD",
+            "DOTUSD": "DOT/USD",
+            "LINKUSD": "LINK/USD",
+            "LTCUSD": "LTC/USD",
+            "BCHUSD": "BCH/USD",
+            "XRPUSD": "XRP/USD",
+            "SOLUSD": "SOL/USD",
+            "MATICUSD": "MATIC/USD",
+        }
+
+        logger.info("Alpaca data collector initialized")
+
+    def _is_crypto_symbol(self, symbol: str) -> bool:
+        """Check if symbol is a crypto asset."""
+        return symbol in self.crypto_symbols
+
+    def _get_alpaca_symbol(self, symbol: str) -> str:
+        """Convert our symbol format to Alpaca's format."""
+        if self._is_crypto_symbol(symbol):
+            return self.crypto_symbols[symbol]
+        return symbol
+
+    def _get_client(self, symbol: str):
+        """Get the appropriate client for the symbol type."""
+        if self._is_crypto_symbol(symbol):
+            return self.crypto_client
+        return self.stock_client
+
+    def fetch_daily_data(
+        self,
+        symbol: str,
+        start_date: Optional[Union[datetime, str]] = None,
+        end_date: Optional[Union[datetime, str]] = None,
+        period: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch daily OHLCV data from Alpaca.
+
+        Args:
+            symbol: Stock or crypto symbol
+            start_date: Start date (optional)
+            end_date: End date (optional)
+            period: Period string (e.g., '5y', '1y', '6mo')
+
+        Returns:
+            pandas.DataFrame with OHLCV data
+        """
+        try:
+            # Convert period to dates if provided
+            if period:
+                end_date = datetime.now()
+                if period == "5y":
+                    start_date = end_date - timedelta(days=5 * 365)
+                elif period == "1y":
+                    start_date = end_date - timedelta(days=365)
+                elif period == "6mo":
+                    start_date = end_date - timedelta(days=180)
+                elif period == "3mo":
+                    start_date = end_date - timedelta(days=90)
+                elif period == "1mo":
+                    start_date = end_date - timedelta(days=30)
+                else:
+                    # Default to 1 year for unknown periods
+                    start_date = end_date - timedelta(days=365)
+
+            # Ensure we have start and end dates
+            if not end_date:
+                end_date = datetime.now()
+            if not start_date:
+                start_date = end_date - timedelta(days=365)  # Default to 1 year
+
+            # Convert string dates to datetime
+            if isinstance(start_date, str):
+                start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+
+            logger.info(
+                f"Fetching {symbol} data from {start_date.date()} to {end_date.date()}"
+            )
+
+            if not ALPACA_AVAILABLE:
+                logger.error("Alpaca SDK not available")
                 return None
 
-            # If Adj Close is missing, use Close
-            if adj_close_column is None:
-                logger.warning(
-                    f"Adjusted Close column missing for {symbol}, using Close instead"
+            # Get appropriate client and symbol format
+            client = self._get_client(symbol)
+            alpaca_symbol = self._get_alpaca_symbol(symbol)
+
+            # Create appropriate request based on asset type
+            if self._is_crypto_symbol(symbol):
+                request = CryptoBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=TimeFrame.Day,
+                    start=start_date,
+                    end=end_date,
                 )
-                data["Adj Close"] = data["Close"]
+                bars = client.get_crypto_bars(request)
+            else:
+                request = StockBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=TimeFrame.Day,
+                    start=start_date,
+                    end=end_date,
+                )
+                bars = client.get_stock_bars(request)
 
-            logger.info(f"Successfully fetched {len(data)} rows for {symbol}")
-            return data
+            if bars and alpaca_symbol in bars:
+                df = bars[alpaca_symbol].df
 
-        try:
-            return self._retry_with_backoff(_fetch_data)
+                # Rename columns to match expected format
+                df = df.rename(
+                    columns={
+                        "open": "Open",
+                        "high": "High",
+                        "low": "Low",
+                        "close": "Close",
+                        "volume": "Volume",
+                    }
+                )
+
+                # Add Adj Close column (same as Close for now)
+                df["Adj Close"] = df["Close"]
+
+                logger.info(f"Fetched {len(df)} days of data for {symbol}")
+                return df
+            else:
+                logger.warning(f"No data returned for {symbol}")
+                return None
+
         except Exception as e:
             logger.error(f"Error fetching data for {symbol}: {str(e)}")
             return None
 
-    def transform_to_market_data(self, symbol, df):
+    def transform_to_market_data(
+        self, symbol: str, df: pd.DataFrame
+    ) -> List[MarketData]:
         """
-        Transform a pandas DataFrame from Yahoo Finance to a list of MarketData objects.
+        Transform DataFrame to MarketData objects.
 
         Args:
-            symbol (str): The ticker symbol
-            df (pandas.DataFrame): DataFrame with OHLCV data
+            symbol: Stock or crypto symbol
+            df: DataFrame with OHLCV data
 
         Returns:
-            list: List of MarketData objects
+            List of MarketData objects
         """
         if df is None or df.empty:
             return []
 
         market_data_list = []
-
-        for index, row in df.iterrows():
-            try:
-                # Get adjusted close column
-                adj_close_col = "Adj Close" if "Adj Close" in df.columns else "Close"
-
-                market_data = MarketData(
-                    symbol=symbol,
-                    date=index.date(),
-                    open=float(row["Open"]),
-                    high=float(row["High"]),
-                    low=float(row["Low"]),
-                    close=float(row["Close"]),
-                    volume=int(row["Volume"]),
-                    adjusted_close=float(row[adj_close_col]),
-                )
-                market_data_list.append(market_data)
-            except Exception as e:
-                logger.error(
-                    f"Error transforming data for {symbol} at {index}: {str(e)}"
-                )
-                continue
+        for date, row in df.iterrows():
+            market_data = MarketData(
+                symbol=symbol,
+                date=date.date(),
+                open_price=float(row["Open"]),
+                high_price=float(row["High"]),
+                low_price=float(row["Low"]),
+                close_price=float(row["Close"]),
+                volume=int(row["Volume"]),
+                adj_close=float(row["Adj Close"]),
+            )
+            market_data_list.append(market_data)
 
         return market_data_list
 
     def collect_and_transform(
-        self, symbol, start_date=None, end_date=None, period=None
-    ):
+        self, symbol: str, start_date=None, end_date=None, period=None
+    ) -> List[MarketData]:
         """
-        Collect data from Yahoo Finance and transform it to MarketData objects.
+        Collect and transform data in one step.
 
         Args:
-            symbol (str): The ticker symbol
-            start_date (datetime or str): Start date for data collection
-            end_date (datetime or str): End date for data collection
-            period (str): Optional period string instead of dates
+            symbol: Stock or crypto symbol
+            start_date: Start date (optional)
+            end_date: End date (optional)
+            period: Period string (optional)
 
         Returns:
-            list: List of MarketData objects
+            List of MarketData objects
         """
         df = self.fetch_daily_data(symbol, start_date, end_date, period)
         return self.transform_to_market_data(symbol, df)
 
 
-class AlphaVantageCollector:
-    """Collector for Alpha Vantage data."""
-
-    def __init__(self, api_key=None):
-        """
-        Initialize the Alpha Vantage collector.
-
-        Args:
-            api_key (str): Alpha Vantage API key
-        """
-        self.api_key = api_key or "YOUR_API_KEY"
-        self.source_name = "Alpha Vantage"
-
-    # Implementation to be added in future phases
-    def fetch_daily_data(self, symbol, start_date=None, end_date=None):
-        """
-        Fetch daily OHLCV data for a symbol from Alpha Vantage.
-
-        Note: This is a placeholder for future implementation.
-        """
-        logger.info(f"Alpha Vantage collector not yet implemented")
-        return None
-
-
-def get_collector(source="yahoo"):
+def get_collector(source: str = "alpaca", **kwargs) -> AlpacaDataCollector:
     """
-    Factory function to create a data collector.
+    Get a data collector instance.
 
     Args:
-        source (str): The data source to use ('yahoo' or 'alphavantage')
+        source: Data source (only 'alpaca' supported)
+        **kwargs: Additional arguments for collector initialization
 
     Returns:
-        object: A data collector instance
+        Data collector instance
     """
-    if source.lower() == "yahoo":
-        return YahooFinanceCollector()
-    elif source.lower() == "alphavantage":
-        return AlphaVantageCollector()
+    if source.lower() == "alpaca":
+        api_key = kwargs.get("api_key")
+        secret_key = kwargs.get("secret_key")
+        paper = kwargs.get("paper", True)
+
+        if not api_key or not secret_key:
+            raise ValueError("Alpaca API key and secret key are required")
+
+        return AlpacaDataCollector(api_key=api_key, secret_key=secret_key, paper=paper)
     else:
-        raise ValueError(f"Unsupported data source: {source}")
+        raise ValueError(
+            f"Unsupported data source: {source}. Only 'alpaca' is supported."
+        )

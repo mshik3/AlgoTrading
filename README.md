@@ -22,10 +22,10 @@ A comprehensive algorithmic trading system built with Python, featuring professi
 
 ### 🔄 **Trading Infrastructure**
 
-- **Paper Trading Simulator** - Risk-free strategy testing
+- **Alpaca Integration** - Real-time trading and portfolio management
 - **Backtesting Engine** - Historical performance analysis
-- **Real-time Data Pipeline** - Market data collection and processing
-- **PostgreSQL Database** - Persistent data storage
+- **Real-time Data Pipeline** - Market data collection from Alpaca
+- **PostgreSQL Database** - Historical market data storage
 
 ### 📈 **Analytics & Reporting**
 
@@ -46,20 +46,31 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Database
+### 2. Configure Environment
 
 ```bash
 # Copy example environment file
 cp env.example .env
 
-# Edit .env with your database credentials
+# Edit .env with your credentials
 # DB_HOST=localhost
 # DB_NAME=algotrading
 # DB_USER=your_username
 # DB_PASSWORD=your_password
+# ALPACA_API_KEY=your_alpaca_api_key
+# ALPACA_SECRET_KEY=your_alpaca_secret_key
 ```
 
-### 3. Launch Professional Dashboard
+### 3. Collect Market Data
+
+```bash
+# Collect 5 years of data for SPY, QQQ, VTI from Alpaca
+python pipeline.py --task collect --symbols SPY QQQ VTI --period 5y
+
+# This will collect real market data from Alpaca's API
+```
+
+### 4. Launch Professional Dashboard
 
 ```bash
 # Start the professional trading dashboard
@@ -71,7 +82,7 @@ cd dashboard && python run_dashboard.py
 
 Visit **http://127.0.0.1:8050** to access your professional trading dashboard!
 
-### 4. Run Strategy Backtests
+### 5. Run Strategy Backtests
 
 ```bash
 # Test Golden Cross strategy
@@ -122,7 +133,7 @@ AlgoTrading/
 │   └── data/           # Live data management and caching
 ├── strategies/         # Trading strategy implementations
 ├── backtesting/        # Backtesting engine and metrics
-├── execution/          # Paper trading simulator
+├── execution/          # Alpaca trading integration
 ├── data/               # Market data collection and storage
 ├── indicators/         # Technical analysis indicators
 └── utils/             # Configuration and utilities

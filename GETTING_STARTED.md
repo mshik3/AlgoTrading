@@ -38,7 +38,7 @@ DB_USER=your_username
 DB_PASSWORD=your_password
 DB_PORT=5432
 
-# Optional - for future live trading
+# Required - for Alpaca integration
 ALPACA_API_KEY=your_alpaca_key
 ALPACA_SECRET_KEY=your_alpaca_secret
 ```
@@ -98,23 +98,27 @@ signals = strategy.generate_signals({'TEST': test_data})
 print(f"Generated {len(signals)} signals")
 ```
 
-### Paper Trading Simulation
+### Alpaca Integration
 
 ```python
-from execution import PaperTradingSimulator
+from execution.alpaca import AlpacaTradingClient
 from strategies.equity.golden_cross import GoldenCrossStrategy
 
-# Initialize paper trading
-paper_trader = PaperTradingSimulator(initial_capital=10000)
-strategy = GoldenCrossStrategy()
+# Initialize Alpaca client
+client = AlpacaTradingClient()
+
+# Get real portfolio data
+account_info = client.get_account_info()
+positions = client.get_positions()
+transaction_history = client.get_transaction_history()
 
 # In a real system, this would run continuously:
-# 1. Get latest market data
+# 1. Get latest market data from Alpaca
 # 2. Generate signals
-# 3. Execute signals in paper trader
-# 4. Monitor performance
+# 3. Execute signals through Alpaca API
+# 4. Monitor real portfolio performance
 
-print(paper_trader.generate_performance_report())
+print(f"Portfolio Value: ${account_info.get('portfolio_value', 0):,.2f}")
 ```
 
 ## 📊 Expected Golden Cross Performance

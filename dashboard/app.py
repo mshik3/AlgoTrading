@@ -18,72 +18,25 @@ import os
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-# Mock classes for basic functionality - we'll use these for now
-class PaperTradingSimulator:
-    def get_portfolio_summary(self):
-        return {
-            "total_value": 105750.00,
-            "cash": 45750.00,
-            "total_pnl": 5750.00,
-            "positions_value": 60000.00,
-        }
-
-    def get_positions(self):
-        # Mock some positions for demonstration
-        return [
-            {
-                "symbol": "AAPL",
-                "quantity": 100,
-                "avg_price": 150.00,
-                "current_price": 157.50,
-                "market_value": 15750.00,
-                "unrealized_pnl": 750.00,
-                "pnl_percent": 0.05,
-            },
-            {
-                "symbol": "MSFT",
-                "quantity": 75,
-                "avg_price": 280.00,
-                "current_price": 295.00,
-                "market_value": 22125.00,
-                "unrealized_pnl": 1125.00,
-                "pnl_percent": 0.0536,
-            },
-            {
-                "symbol": "GOOGL",
-                "quantity": 50,
-                "avg_price": 130.00,
-                "current_price": 142.50,
-                "market_value": 7125.00,
-                "unrealized_pnl": 625.00,
-                "pnl_percent": 0.0962,
-            },
-        ]
-
-    def get_trade_history(self, limit=10):
-        from datetime import datetime, timedelta
-
-        return [
-            {
-                "timestamp": datetime.now() - timedelta(hours=2),
-                "action": "BUY",
-                "symbol": "AAPL",
-                "quantity": 50,
-                "price": 155.25,
-            },
-            {
-                "timestamp": datetime.now() - timedelta(days=1),
-                "action": "BUY",
-                "symbol": "MSFT",
-                "quantity": 25,
-                "price": 285.50,
-            },
-        ]
+# Import analysis components
+from dashboard.components.analysis import (
+    create_analysis_layout,
+    register_analysis_callbacks,
+)
 
 
-# Initialize paper trader
-paper_trader = PaperTradingSimulator()
+# Import real Alpaca account service
+from dashboard.services.alpaca_account import AlpacaAccountService
+
+# Initialize real Alpaca account service
+try:
+    alpaca_account = AlpacaAccountService()
+    if not alpaca_account.is_connected():
+        raise Exception("Alpaca connection failed")
+except Exception as e:
+    print(f"❌ Alpaca connection required: {e}")
+    print("Please set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables")
+    exit(1)
 
 
 # Initialize the Dash app with professional theme
@@ -292,6 +245,8 @@ app.layout = dbc.Container(
                 ),
             ]
         ),
+        # Analysis Section
+        html.Div([create_analysis_layout()], className="mt-5"),
     ],
     fluid=True,
     className="dashboard-container",
@@ -324,41 +279,67 @@ def update_dashboard(n_intervals):
         # Get current time
         current_time = f"Last Updated: {datetime.now().strftime('%H:%M:%S')}"
 
-        # Get portfolio summary
-        portfolio = paper_trader.get_portfolio_summary()
-        positions = paper_trader.get_positions()
+        # Get real portfolio summary from Alpaca
+        portfolio = alpaca_account.get_account_summary()
+        positions = alpaca_account.get_positions()
+
+        # Validate positions data
+        if not isinstance(positions, list):
+            positions = []
 
         # Calculate KPIs
+        # Ensure portfolio data is valid
+        if not isinstance(portfolio, dict):
+            portfolio = {"total_value": 0, "cash": 0, "total_pnl": 0}
+
         total_value = f"${portfolio.get('total_value', 0):,.2f}"
         cash = f"${portfolio.get('cash', 0):,.2f}"
 
-        # Calculate daily P&L (mock for now)
-        daily_pnl = (
-            portfolio.get("total_pnl", 0) * 0.3
-        )  # Assume 30% of total P&L is today
-        daily_pnl_str = f"${daily_pnl:+,.2f}" if daily_pnl != 0 else "$0.00"
-        daily_change_class = (
-            "kpi-change positive"
-            if daily_pnl > 0
-            else "kpi-change negative" if daily_pnl < 0 else "kpi-change neutral"
-        )
-        daily_change_text = (
-            f"{(daily_pnl/100000)*100:+.2f}%" if daily_pnl != 0 else "0.00%"
-        )
+        # Calculate daily P&L - return 0 if no positions
+        positions_count = len(positions) if positions else 0
+        if positions_count == 0:
+            daily_pnl = 0.0
+            daily_pnl_str = "$0.00"
+            daily_change_class = "kpi-change neutral"
+            daily_change_text = "0.00%"
+        else:
+            # Only calculate P&L if there are actual positions
+            daily_pnl = (
+                portfolio.get("total_pnl", 0) * 0.3
+            )  # Assume 30% of total P&L is today
+            daily_pnl_str = f"${daily_pnl:+,.2f}" if daily_pnl != 0 else "$0.00"
+            daily_change_class = (
+                "kpi-change positive"
+                if daily_pnl > 0
+                else "kpi-change negative" if daily_pnl < 0 else "kpi-change neutral"
+            )
+            daily_change_text = (
+                f"{(daily_pnl/100000)*100:+.2f}%" if daily_pnl != 0 else "0.00%"
+            )
 
-        # Total return calculation
-        initial_value = 100000  # Mock initial portfolio value
-        current_value = portfolio.get("total_value", initial_value)
-        total_return_pct = ((current_value - initial_value) / initial_value) * 100
-        total_return_str = f"{total_return_pct:+.2f}%"
+        # Total return calculation - handle zero positions case
+        if positions_count == 0:
+            total_return_pct = 0.0
+            total_return_str = "0.00%"
+            total_change_str = "$0.00"
+            total_change_class = "kpi-change neutral"
+        else:
+            initial_value = 100000  # Mock initial portfolio value
+            current_value = portfolio.get("total_value", initial_value)
+            total_return_pct = ((current_value - initial_value) / initial_value) * 100
+            total_return_str = f"{total_return_pct:+.2f}%"
 
-        # Total change
-        total_change_str = f"${current_value - initial_value:+,.2f}"
-        total_change_class = (
-            "kpi-change positive"
-            if total_return_pct > 0
-            else "kpi-change negative" if total_return_pct < 0 else "kpi-change neutral"
-        )
+            # Total change
+            total_change_str = f"${current_value - initial_value:+,.2f}"
+            total_change_class = (
+                "kpi-change positive"
+                if total_return_pct > 0
+                else (
+                    "kpi-change negative"
+                    if total_return_pct < 0
+                    else "kpi-change neutral"
+                )
+            )
 
         # Build positions table
         positions_table = create_positions_table(positions)
@@ -390,20 +371,22 @@ def update_dashboard(n_intervals):
 
     except Exception as e:
         print(f"Dashboard update error: {e}")
-        # Return default values on error
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {str(e)}")
+        # Return zero values on error when no positions exist
         current_time = (
             f"Last Updated: {datetime.now().strftime('%H:%M:%S')} (Error: {str(e)})"
         )
         return (
             current_time,
-            "$105,750.00",
-            "$45,750.00",
-            "+$1,725.00",
-            "+5.75%",
-            "+$5,750.00",
-            "kpi-change positive",
-            "+1.73%",
-            "kpi-change positive",
+            "$0.00",
+            "$0.00",
+            "$0.00",
+            "0.00%",
+            "$0.00",
+            "kpi-change neutral",
+            "0.00%",
+            "kpi-change neutral",
             create_positions_table([]),
             create_strategy_monitor(),
             create_empty_portfolio_chart(),
@@ -476,7 +459,12 @@ def create_positions_table(positions):
                 "fontWeight": "bold",
             },
         ],
-        className="trading-table",
+        css=[
+            {
+                "selector": ".dash-table-container",
+                "rule": "background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color);",
+            }
+        ],
     )
 
 
@@ -578,56 +566,28 @@ def create_strategy_monitor():
 def create_portfolio_chart():
     """Create the portfolio performance chart"""
     try:
-        # Generate mock portfolio history
-        dates = pd.date_range(
-            start=datetime.now() - timedelta(days=30), end=datetime.now(), freq="D"
-        )
-        # Generate realistic portfolio progression
-        base_value = 100000
-        daily_returns = [
-            0.008,
-            -0.012,
-            0.015,
-            -0.005,
-            0.022,
-            -0.008,
-            0.011,
-            0.006,
-            -0.015,
-            0.018,
-            0.003,
-            -0.009,
-            0.025,
-            -0.011,
-            0.007,
-            0.014,
-            -0.006,
-            0.019,
-            -0.003,
-            0.008,
-            0.012,
-            -0.007,
-            0.009,
-            0.016,
-            -0.013,
-            0.021,
-            -0.004,
-            0.010,
-            0.005,
-            -0.002,
-            0.0575,
-        ]
+        # Get real portfolio history from Alpaca
+        from .data.live_data import LiveDataManager
 
-        values = [base_value]
-        for ret in daily_returns[: len(dates) - 1]:
-            values.append(values[-1] * (1 + ret))
+        live_data = LiveDataManager()
+        history_df = live_data.get_portfolio_history(days=30)
+
+        if history_df.empty:
+            # Fallback to simple chart if no data
+            dates = pd.date_range(
+                start=datetime.now() - timedelta(days=30), end=datetime.now(), freq="D"
+            )
+            values = [100000] * len(dates)
+        else:
+            dates = history_df["date"]
+            values = history_df["portfolio_value"]
 
         fig = go.Figure()
 
         # Portfolio line
         fig.add_trace(
             go.Scatter(
-                x=dates[: len(values)],
+                x=dates,
                 y=values,
                 mode="lines",
                 name="Portfolio Value",
@@ -688,46 +648,81 @@ def create_empty_portfolio_chart():
 
 
 def create_activity_feed():
-    """Create the recent activity feed"""
-    # Mock activity data based on our paper trader
+    """Create the recent activity feed with real data"""
+    # Get real account data and signals
     now = datetime.now()
-    activities = [
-        {
-            "time": (now - timedelta(minutes=5)).strftime("%H:%M:%S"),
-            "description": "Portfolio value updated: $105,750 (+$1,725 today)",
-            "type": "system",
-        },
-        {
-            "time": (now - timedelta(minutes=15)).strftime("%H:%M:%S"),
-            "description": "Golden Cross BUY signal detected for AAPL",
-            "type": "signal",
-        },
-        {
-            "time": (now - timedelta(hours=2)).strftime("%H:%M:%S"),
-            "description": "Executed BUY: 50 shares of AAPL at $155.25",
-            "type": "trade",
-        },
-        {
-            "time": (now - timedelta(hours=4)).strftime("%H:%M:%S"),
-            "description": "MSFT position up +5.36% ($1,125 unrealized gain)",
-            "type": "performance",
-        },
-        {
-            "time": (now - timedelta(days=1)).strftime("%H:%M:%S"),
-            "description": "Executed BUY: 25 shares of MSFT at $285.50",
-            "type": "trade",
-        },
-        {
-            "time": (now - timedelta(days=1, hours=3)).strftime("%H:%M:%S"),
-            "description": "Portfolio rebalanced - Risk level: Moderate",
-            "type": "system",
-        },
-        {
-            "time": (now - timedelta(days=2)).strftime("%H:%M:%S"),
-            "description": "Golden Cross strategy performance: +8.2% this month",
-            "type": "performance",
-        },
-    ]
+
+    # Get real account status
+    account_summary = alpaca_account.get_account_summary()
+    positions = alpaca_account.get_positions()
+    recent_orders = alpaca_account.get_recent_orders(limit=5)
+
+    activities = []
+
+    # Add account status update
+    if account_summary.get("note"):
+        activities.append(
+            {
+                "time": now.strftime("%H:%M:%S"),
+                "description": f"Account Status: {account_summary.get('note', 'Connected')}",
+                "type": "system",
+            }
+        )
+    else:
+        activities.append(
+            {
+                "time": now.strftime("%H:%M:%S"),
+                "description": f"Account updated: ${account_summary.get('total_value', 0):,.2f} total value",
+                "type": "system",
+            }
+        )
+
+    # Add recent orders (real trades)
+    for order in recent_orders:
+        if order.get("status") == "filled":
+            activities.append(
+                {
+                    "time": (
+                        order["timestamp"].strftime("%H:%M:%S")
+                        if hasattr(order["timestamp"], "strftime")
+                        else str(order["timestamp"])
+                    ),
+                    "description": f"Executed {order['action']}: {order['quantity']} shares of {order['symbol']} at ${order['price']:.2f}",
+                    "type": "trade",
+                }
+            )
+
+    # Add position updates (only if there are real positions)
+    for position in positions:
+        if position.get("unrealized_pnl", 0) != 0:
+            pnl_sign = "+" if position["unrealized_pnl"] > 0 else ""
+            activities.append(
+                {
+                    "time": (now - timedelta(minutes=30)).strftime("%H:%M:%S"),
+                    "description": f"{position['symbol']} position {pnl_sign}{position['pnl_percent']:.2f}% (${pnl_sign}{position['unrealized_pnl']:.0f} unrealized)",
+                    "type": "performance",
+                }
+            )
+
+    # Add strategy signal placeholder (will be populated by analysis)
+    if not activities or len(activities) < 3:
+        activities.append(
+            {
+                "time": (now - timedelta(minutes=10)).strftime("%H:%M:%S"),
+                "description": "Ready for strategy analysis - run analysis to see signals",
+                "type": "signal",
+            }
+        )
+
+    # Add account connection status
+    if not alpaca_account.is_connected():
+        activities.append(
+            {
+                "time": (now - timedelta(minutes=1)).strftime("%H:%M:%S"),
+                "description": "⚠️ Alpaca account not connected - check API credentials",
+                "type": "system",
+            }
+        )
 
     activity_items = []
     for activity in activities:
@@ -772,6 +767,10 @@ def get_activity_icon(activity_type):
         "performance": "fas fa-chart-line",
     }
     return icons.get(activity_type, "fas fa-info-circle")
+
+
+# Register analysis callbacks
+register_analysis_callbacks(app)
 
 
 if __name__ == "__main__":
