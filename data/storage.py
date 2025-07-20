@@ -162,8 +162,10 @@ def get_engine(db_uri=None, max_retries=3, retry_delay=5):
             )
 
             # Test the connection
+            from sqlalchemy import text
+
             with engine.connect() as conn:
-                conn.execute("SELECT 1")
+                conn.execute(text("SELECT 1"))
 
             if attempt > 0:
                 logger.info(f"Database connection successful on attempt {attempt + 1}")
@@ -238,7 +240,9 @@ def get_session(engine=None, max_retries=3):
             session = Session()
 
             # Test the session with a simple query
-            session.execute("SELECT 1")
+            from sqlalchemy import text
+
+            session.execute(text("SELECT 1"))
 
             if attempt > 0:
                 logger.info(

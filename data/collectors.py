@@ -158,16 +158,17 @@ class YahooFinanceCollector:
                 start_date_val = start_date
 
             # Create ticker with our configured session
-            ticker = yf.Ticker(symbol, session=self.session)
+            # Remove any $ prefix if present
+            clean_symbol = symbol.replace("$", "")
+            ticker = yf.Ticker(clean_symbol, session=self.session)
 
             # Fetch data
             if period:
-                data = ticker.history(period=period, progress=False, auto_adjust=True)
+                data = ticker.history(period=period, auto_adjust=True)
             else:
                 data = ticker.history(
                     start=start_date_val,
                     end=end_date_val,
-                    progress=False,
                     auto_adjust=True,
                 )
 
