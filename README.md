@@ -7,32 +7,35 @@ A comprehensive algorithmic trading system built with Python, featuring professi
 ### 📊 **Professional Trading Dashboard**
 
 - **Industry-standard dark theme** inspired by Bloomberg Terminal and TradingView
-- **Real-time portfolio monitoring** with live P&L calculations
+- **Real-time portfolio monitoring** with live P&L calculations from Alpaca API
 - **Interactive TradingView charts** for professional market analysis
 - **Strategy performance tracking** with key metrics (win rate, Sharpe ratio, etc.)
 - **Auto-refresh every 30 seconds** for live market updates
 - **Responsive design** optimized for trading floors
+- **Paper trading execution** with safety validations and Alpaca integration
 
 ### ⚡ **Trading Strategies**
 
 - **Golden Cross Strategy** - 50/200 MA crossover with volume confirmation
-- **Mean Reversion** (Coming Soon)
-- **ETF Rotation** (Coming Soon)
-- **Deep Value** (Coming Soon)
+- **Mean Reversion Strategy** - Statistical mean reversion with O-U process analysis
+- **Dual Momentum ETF Rotation** - Gary Antonacci's proven dual momentum approach
+- **Sector Rotation Strategy** - Sector ETF rotation based on relative strength and momentum
 
 ### 🔄 **Trading Infrastructure**
 
 - **Alpaca Integration** - Real-time trading and portfolio management
-- **Backtesting Engine** - Historical performance analysis
-- **Real-time Data Pipeline** - Market data collection from Alpaca
-- **PostgreSQL Database** - Historical market data storage
+- **Backtesting Engine** - Historical performance analysis with realistic execution
+- **Real-time Data Pipeline** - Market data collection from Alpaca API
+- **PostgreSQL Database** - Historical market data storage and trade tracking
+- **Paper Trading Execution** - Safe testing environment with real market data
 
 ### 📈 **Analytics & Reporting**
 
-- Portfolio performance metrics
-- Risk-adjusted returns (Sharpe ratio, max drawdown)
-- Trade history and signal analysis
-- Performance reports and alerts
+- Portfolio performance metrics with real-time updates
+- Risk-adjusted returns (Sharpe ratio, max drawdown, win rate)
+- Trade history and signal analysis across all strategies
+- Performance reports and alerts with strategy comparison
+- Multi-strategy performance tracking and ranking
 
 ## 🚀 Quick Start
 
@@ -82,22 +85,25 @@ cd dashboard && python run_dashboard.py
 
 Visit **http://127.0.0.1:8050** to access your professional trading dashboard!
 
-### 5. Run Strategy Backtests
+### 5. Run Strategy Analysis
 
 ```bash
-# Test Golden Cross strategy
-python pipeline.py backtest golden_cross
+# Run today's analysis with all 4 strategies
+python run_today_analysis.py
 
-# Generate trading signals
-python pipeline.py signals golden_cross
+# Test Golden Cross strategy backtesting
+python pipeline.py --task backtest --strategy golden_cross
+
+# Generate current trading signals
+python pipeline.py --task signals --strategy golden_cross
 ```
 
 ## 🖥️ Dashboard Features
 
 ### 📊 **Live Portfolio Monitoring**
 
-- Total portfolio value with daily P&L
-- Real-time position tracking
+- Total portfolio value with daily P&L from Alpaca
+- Real-time position tracking across all strategies
 - Available cash and margin usage
 - Performance metrics since inception
 
@@ -108,11 +114,11 @@ python pipeline.py signals golden_cross
 - Strategy drawdown visualization
 - Market overview with major indices
 
-### 🎯 **Strategy Monitor**
+### 🎯 **Multi-Strategy Monitor**
 
-- Live Golden Cross strategy status
-- Recent buy/sell signals
-- Win rate and trade statistics
+- Live status of all 4 strategies (Golden Cross, Mean Reversion, Dual Momentum, Sector Rotation)
+- Recent buy/sell signals with confidence levels
+- Win rate and trade statistics per strategy
 - Performance vs benchmark tracking
 
 ### 📱 **Activity Feed**
@@ -127,11 +133,14 @@ python pipeline.py signals golden_cross
 ```
 AlgoTrading/
 ├── dashboard/           # Professional Dash trading dashboard
-│   ├── app.py          # Main dashboard application
+│   ├── app.py          # Main dashboard application with Bloomberg-style UI
 │   ├── assets/         # CSS themes and styling
 │   ├── components/     # TradingView widgets and UI components
-│   └── data/           # Live data management and caching
+│   ├── data/           # Live data management and caching
+│   └── services/       # Alpaca integration and strategy metrics
 ├── strategies/         # Trading strategy implementations
+│   ├── equity/         # Golden Cross and Mean Reversion strategies
+│   └── etf/           # Dual Momentum and Sector Rotation strategies
 ├── backtesting/        # Backtesting engine and metrics
 ├── execution/          # Alpaca trading integration
 ├── data/               # Market data collection and storage
@@ -139,20 +148,35 @@ AlgoTrading/
 └── utils/             # Configuration and utilities
 ```
 
-## 📊 Golden Cross Strategy
+## 📊 Strategy Performance
 
-Our flagship strategy uses:
+### **Golden Cross Strategy**
 
 - **50-day and 200-day moving averages** for trend detection
 - **Volume confirmation** to filter false signals
 - **Risk management** with position sizing and stop losses
+- **Performance**: 68% win rate, Sharpe ratio: 1.2, Max drawdown: -8%
 
-**Performance Highlights:**
+### **Mean Reversion Strategy**
 
-- 68% win rate in backtests
-- Sharpe ratio: 1.2
-- Maximum drawdown: -8%
-- Annualized return: 15.6%
+- **Statistical mean reversion** with O-U process analysis
+- **Bollinger Bands and RSI** for entry/exit signals
+- **Multi-timeframe analysis** for signal confirmation
+- **Performance**: Optimized for sideways markets and mean reversion opportunities
+
+### **Dual Momentum ETF Rotation**
+
+- **Gary Antonacci's proven approach** with absolute/relative momentum
+- **Monthly rebalancing** with defensive positioning
+- **ETF universe**: US equities, international, bonds, real estate, commodities
+- **Performance**: Historically outperforms buy-and-hold with lower drawdowns
+
+### **Sector Rotation Strategy**
+
+- **Sector ETF rotation** based on relative strength and momentum
+- **Top 4 sectors** allocation with equal weighting
+- **Volatility-adjusted momentum** scoring
+- **Performance**: Captures sector leadership changes and momentum
 
 ## 🔧 Configuration
 
@@ -167,6 +191,10 @@ DB_NAME=algotrading
 DB_USER=your_username
 DB_PASSWORD=your_password
 
+# Alpaca Trading API (Required for dashboard)
+ALPACA_API_KEY=your_alpaca_api_key
+ALPACA_SECRET_KEY=your_alpaca_secret_key
+
 # Trading Configuration
 INITIAL_CAPITAL=100000
 RISK_PER_TRADE=0.02
@@ -178,6 +206,7 @@ RISK_PER_TRADE=0.02
 - **Data caching**: 30-60 seconds for optimal performance
 - **Theme**: Professional dark mode
 - **Charts**: TradingView integration
+- **Paper Trading**: Safe execution environment
 
 ## 📈 Getting Started Guide
 
@@ -203,9 +232,9 @@ pytest tests/integration/
 
 ### Adding New Strategies
 
-1. Create strategy class in `strategies/equity/`
+1. Create strategy class in `strategies/equity/` or `strategies/etf/`
 2. Implement required methods (`generate_signals`, etc.)
-3. Add to pipeline configuration
+3. Add to strategy metrics service
 4. Test with backtesting engine
 
 ## 📊 Dashboard Screenshots
@@ -216,7 +245,29 @@ The professional trading dashboard features:
 - **Real-time KPI cards** with financial color coding
 - **TradingView charts** for technical analysis
 - **Live activity feed** with trade notifications
-- **Strategy monitoring** with performance metrics
+- **Multi-strategy monitoring** with performance metrics
+
+## 🚧 Production Readiness
+
+### Current Status: Paper Trading Ready ✅
+
+The system is fully functional for paper trading with:
+
+- ✅ 4 complete trading strategies
+- ✅ Professional dashboard with real-time data
+- ✅ Alpaca integration for paper trading
+- ✅ Comprehensive backtesting and analysis
+- ✅ Multi-strategy performance tracking
+
+### Next Steps for Real Money Trading
+
+See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for detailed requirements:
+
+- Daily automation system
+- Email notifications for trading signals
+- $1K portfolio safety controls
+- Cash management and position sizing
+- Risk management and circuit breakers
 
 ## 🤝 Contributing
 
