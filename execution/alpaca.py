@@ -42,6 +42,10 @@ class AlpacaConfig:
     secret_key: str
     base_url: str = "https://paper-api.alpaca.markets"  # Paper trading by default
     paper: bool = True
+    # Safety override parameters for position sizing
+    max_position_size_override: float = 0.30  # 30% max position size
+    max_cash_usage_override: float = 0.50  # 50% max cash usage
+    fallback_cash_percentage: float = 0.10  # 10% fallback when strategy doesn't specify quantity
 
 
 class AlpacaTradingClient:
@@ -91,6 +95,39 @@ class AlpacaTradingClient:
         self._load_crypto_symbols()
 
         logger.info(f"Alpaca trading client initialized (paper: {config.paper})")
+
+    def _calculate_fallback_quantity(self, signal: StrategySignal) -> int:
+        """
+        Calculate quantity when strategy doesn't specify one.
+        
+        Args:
+            signal: The trading signal
+            
+        Returns:
+            Number of shares to trade based on fallback logic
+        """
+        try:
+            account = self.trading_client.get_account()
+            available_cash = float(account.buying_power)
+            current_price = self.get_current_price(signal.symbol)
+            
+            if current_price is None or current_price <= 0:
+                logger.error(f"Invalid price for {signal.symbol}: {current_price}")
+                return 0
+            
+            # Use fallback percentage of available cash
+            position_value = available_cash * self.config.fallback_cash_percentage
+            
+            # Calculate quantity (round down to whole shares)
+            quantity = int(position_value / current_price)
+            
+            logger.info(f"Fallback quantity calculated for {signal.symbol}: {quantity} shares (${position_value:.2f})")
+            
+            return max(1, quantity)  # At least 1 share
+            
+        except Exception as e:
+            logger.error(f"Error calculating fallback quantity for {signal.symbol}: {str(e)}")
+            return 0
 
     def _load_config_from_env(self) -> AlpacaConfig:
         """Load Alpaca configuration from environment variables."""
@@ -371,6 +408,47 @@ class AlpacaTradingClient:
             logger.error(f"Error executing signal: {str(e)}")
             return False
 
+    def execute_signals_with_prioritization(self, signals: List[StrategySignal]) -> Dict[str, bool]:
+        """
+        Execute multiple signals with highest conviction prioritization.
+        
+        Args:
+            signals: List of trading signals to execute
+            
+        Returns:
+            Dictionary mapping signal symbol -> execution success
+        """
+        if not signals:
+            logger.info("No signals to execute")
+            return {}
+            
+        # Filter to only BUY signals (since you mentioned highest conviction buy)
+        buy_signals = [s for s in signals if s.signal_type == SignalType.BUY]
+        
+        if not buy_signals:
+            logger.info("No BUY signals to execute")
+            return {}
+            
+        # Sort by confidence (highest first)
+        buy_signals.sort(key=lambda x: x.confidence, reverse=True)
+        
+        logger.info(f"Executing {len(buy_signals)} BUY signals sorted by confidence:")
+        for i, signal in enumerate(buy_signals):
+            logger.info(f"  {i+1}. {signal.symbol}: {signal.confidence:.3f} confidence")
+        
+        # Execute signals in order of confidence
+        results = {}
+        for signal in buy_signals:
+            success = self.execute_signal(signal)
+            results[signal.symbol] = success
+            
+            if success:
+                logger.info(f"✓ Successfully executed signal for {signal.symbol}")
+            else:
+                logger.error(f"✗ Failed to execute signal for {signal.symbol}")
+                
+        return results
+
     def _execute_buy_order(self, signal: StrategySignal) -> bool:
         """
         Execute a buy order.
@@ -388,19 +466,59 @@ class AlpacaTradingClient:
                 logger.error(f"Could not get current price for {signal.symbol}")
                 return False
 
-            # Calculate position size (use 5% of available cash for safety)
+            # Get account information
             account = self.trading_client.get_account()
             available_cash = float(account.buying_power)
-            position_value = available_cash * 0.05  # 5% of available cash
+            portfolio_value = float(account.portfolio_value)
 
-            # Calculate quantity (round down to whole shares)
-            quantity = int(position_value / current_price)
+            # Determine quantity to trade
+            if signal.quantity and signal.quantity > 0:
+                # Use strategy-calculated quantity
+                quantity = signal.quantity
+                logger.info(f"Using strategy-calculated quantity for {signal.symbol}: {quantity} shares")
+            else:
+                # Use fallback calculation
+                quantity = self._calculate_fallback_quantity(signal)
+                if quantity <= 0:
+                    logger.error(f"Could not calculate quantity for {signal.symbol}")
+                    return False
+                logger.info(f"Using fallback-calculated quantity for {signal.symbol}: {quantity} shares")
 
+            # Apply safety overrides
+            original_quantity = quantity
+            
+            # Override 1: Max position size (e.g., 30% of portfolio)
+            max_position_value = portfolio_value * self.config.max_position_size_override
+            max_shares_by_size = int(max_position_value / current_price)
+            
+            # Override 2: Max cash usage (e.g., 50% of available cash)
+            max_cash_usage = available_cash * self.config.max_cash_usage_override
+            max_shares_by_cash = int(max_cash_usage / current_price)
+            
+            # Apply overrides
+            quantity = min(quantity, max_shares_by_size, max_shares_by_cash)
+            
+            # Log if overrides were applied
+            if quantity != original_quantity:
+                logger.warning(
+                    f"Quantity overridden for {signal.symbol}: {original_quantity} -> {quantity} "
+                    f"due to safety rules (max_size: {max_shares_by_size}, max_cash: {max_shares_by_cash})"
+                )
+            else:
+                logger.info(f"No safety overrides applied for {signal.symbol}")
+
+            # Final validation
             if quantity <= 0:
                 logger.warning(
-                    f"Position size too small for {signal.symbol}: ${position_value:.2f}"
+                    f"Final quantity too small for {signal.symbol}: {quantity} shares"
                 )
                 return False
+
+            # Calculate final position value for logging
+            final_position_value = quantity * current_price
+            logger.info(
+                f"Final position for {signal.symbol}: {quantity} shares @ ${current_price:.2f} = ${final_position_value:.2f}"
+            )
 
             # Get appropriate symbol format for crypto
             alpaca_symbol = self._get_alpaca_symbol(signal.symbol)
