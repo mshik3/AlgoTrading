@@ -233,6 +233,20 @@ app.layout = dbc.Container(
                             ],
                             className="chart-container mb-4",
                         ),
+                        # Open Orders Table
+                        html.Div(
+                            [
+                                html.H5(
+                                    [
+                                        html.I(className="fas fa-clock me-2"),
+                                        "Open Orders",
+                                    ],
+                                    className="chart-title",
+                                ),
+                                html.Div(id="open-orders-table"),
+                            ],
+                            className="chart-container mb-4",
+                        ),
                         # Strategy Monitor
                         html.Div(
                             [
@@ -307,6 +321,7 @@ app.layout = dbc.Container(
         Output("daily-change", "children"),
         Output("daily-change", "className"),
         Output("positions-table", "children"),
+        Output("open-orders-table", "children"),
         Output("strategy-monitor", "children"),
         Output("portfolio-chart", "figure"),
         Output("activity-feed", "children"),
@@ -389,6 +404,9 @@ def update_dashboard(n_intervals):
         # Build positions table
         positions_table = create_positions_table(positions)
 
+        # Build open orders table
+        open_orders_table = create_open_orders_table()
+
         # Build strategy monitor with multi-strategy support
         strategy_monitor = create_strategy_monitor()
 
@@ -409,6 +427,7 @@ def update_dashboard(n_intervals):
             daily_change_text,
             daily_change_class,
             positions_table,
+            open_orders_table,
             strategy_monitor,
             portfolio_chart,
             activity_feed,
@@ -433,6 +452,7 @@ def update_dashboard(n_intervals):
             "0.00%",
             "kpi-change neutral",
             create_positions_table([]),
+            create_empty_open_orders_table(),
             create_strategy_monitor(),
             create_empty_portfolio_chart(),
             create_empty_activity_feed(),
@@ -517,6 +537,118 @@ def create_empty_positions_table():
     """Create empty positions table for error state"""
     return html.Div(
         [html.P("No positions data available", className="text-center text-muted py-3")]
+    )
+
+
+def create_open_orders_table():
+    """Create the open orders table with real data"""
+    try:
+        # Get services using lazy loading
+        alpaca_account = get_alpaca_account_service()
+
+        # Get recent orders and filter for open/pending ones
+        all_orders = alpaca_account.get_recent_orders(limit=20)
+        open_orders = [
+            order
+            for order in all_orders
+            if order.get("status")
+            in ["pending_new", "new", "accepted", "accepted_for_bidding"]
+        ]
+
+        if not open_orders:
+            return html.Div(
+                [html.P("No open orders", className="text-center text-muted py-3")]
+            )
+
+        # Convert to DataFrame for table display
+        df = pd.DataFrame(open_orders)
+
+        # Convert UUID to string for JSON serialization
+        if "id" in df.columns:
+            df["id"] = df["id"].astype(str)
+
+        # Format timestamp
+        if "timestamp" in df.columns:
+            df["time"] = df["timestamp"].apply(
+                lambda x: x.strftime("%H:%M:%S") if hasattr(x, "strftime") else str(x)
+            )
+        else:
+            df["time"] = "N/A"
+
+        # Remove timestamp column to avoid serialization issues
+        if "timestamp" in df.columns:
+            df = df.drop(columns=["timestamp"])
+
+        # Create table
+        return dash_table.DataTable(
+            data=df.to_dict("records"),
+            columns=[
+                {"name": "Time", "id": "time"},
+                {"name": "Symbol", "id": "symbol"},
+                {"name": "Side", "id": "action"},
+                {
+                    "name": "Quantity",
+                    "id": "quantity",
+                    "type": "numeric",
+                    "format": {"specifier": ",.0f"},
+                },
+                {
+                    "name": "Price",
+                    "id": "price",
+                    "type": "numeric",
+                    "format": {"specifier": ",.2f"},
+                },
+                {"name": "Status", "id": "status"},
+                {"name": "Type", "id": "order_type"},
+            ],
+            style_cell={"textAlign": "center", "padding": "8px", "fontSize": "12px"},
+            style_data_conditional=[
+                {
+                    "if": {"filter_query": "{action} = buy"},
+                    "color": "var(--profit-color)",
+                    "fontWeight": "bold",
+                },
+                {
+                    "if": {"filter_query": "{action} = sell"},
+                    "color": "var(--loss-color)",
+                    "fontWeight": "bold",
+                },
+                {
+                    "if": {"filter_query": "{status} = pending_new"},
+                    "backgroundColor": "rgba(255, 193, 7, 0.1)",
+                },
+                {
+                    "if": {"filter_query": "{status} = new"},
+                    "backgroundColor": "rgba(40, 167, 69, 0.1)",
+                },
+            ],
+            css=[
+                {
+                    "selector": ".dash-table-container",
+                    "rule": "background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color);",
+                }
+            ],
+        )
+
+    except Exception as e:
+        return html.Div(
+            [
+                html.P(
+                    f"Error loading open orders: {str(e)}",
+                    className="text-center text-muted py-3",
+                )
+            ]
+        )
+
+
+def create_empty_open_orders_table():
+    """Create empty open orders table for error state"""
+    return html.Div(
+        [
+            html.P(
+                "No open orders data available", className="text-center text-muted py-3"
+            )
+        ]
     )
 
 
@@ -1079,21 +1211,37 @@ def create_activity_feed():
             }
         )
 
-    # Add recent orders (real trades)
+    # Add recent orders (all orders including pending)
     if recent_orders:
         for order in recent_orders:
-            if order.get("status") == "filled":
-                activities.append(
-                    {
-                        "time": (
-                            order["timestamp"].strftime("%H:%M:%S")
-                            if hasattr(order["timestamp"], "strftime")
-                            else str(order["timestamp"])
-                        ),
-                        "description": f"Executed {order['action']}: {order['quantity']} shares of {order['symbol']} at ${order['price']:.2f}",
-                        "type": "trade",
-                    }
-                )
+            # Format timestamp
+            if hasattr(order["timestamp"], "strftime"):
+                time_str = order["timestamp"].strftime("%H:%M:%S")
+            else:
+                time_str = str(order["timestamp"])
+
+            # Create description based on order status
+            status = order.get("status", "unknown")
+            if status == "filled":
+                description = f"✅ Executed {order['action']}: {order['quantity']} shares of {order['symbol']} at ${order['price']:.2f}"
+                order_type = "trade"
+            elif status in ["pending_new", "new", "accepted", "accepted_for_bidding"]:
+                description = f"⏳ Pending {order['action']}: {order['quantity']} shares of {order['symbol']} at ${order['price']:.2f}"
+                order_type = "pending"
+            elif status == "canceled":
+                description = f"❌ Cancelled {order['action']}: {order['quantity']} shares of {order['symbol']} at ${order['price']:.2f}"
+                order_type = "cancelled"
+            else:
+                description = f"📋 {order['action'].title()} order: {order['quantity']} shares of {order['symbol']} at ${order['price']:.2f} ({status})"
+                order_type = "order"
+
+            activities.append(
+                {
+                    "time": time_str,
+                    "description": description,
+                    "type": order_type,
+                }
+            )
     else:
         # No recent orders - show appropriate message
         activities.append(
@@ -1200,6 +1348,9 @@ def get_activity_icon(activity_type):
     icons = {
         "signal": "fas fa-bullseye",
         "trade": "fas fa-exchange-alt",
+        "pending": "fas fa-clock",
+        "cancelled": "fas fa-times-circle",
+        "order": "fas fa-file-alt",
         "system": "fas fa-cog",
         "performance": "fas fa-chart-line",
     }

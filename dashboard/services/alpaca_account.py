@@ -229,6 +229,7 @@ class AlpacaAccountService:
             for order in orders:
                 recent_orders.append(
                     {
+                        "id": order.id,
                         "timestamp": order.created_at,
                         "action": order.side.value,
                         "symbol": order.symbol,
@@ -261,6 +262,27 @@ class AlpacaAccountService:
         # This would be populated by the analysis service
         # For now, return empty list - signals will come from analysis
         return []
+
+    def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancel an order by ID.
+
+        Args:
+            order_id: The order ID to cancel
+
+        Returns:
+            True if cancelled successfully, False otherwise
+        """
+        if not self.connected or not self.trading_client:
+            raise Exception("Alpaca connection required for order cancellation")
+
+        try:
+            self.trading_client.cancel_order_by_id(order_id)
+            logger.info(f"✓ Order {order_id} cancelled successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error cancelling order {order_id}: {e}")
+            return False
 
     def is_connected(self) -> bool:
         """
