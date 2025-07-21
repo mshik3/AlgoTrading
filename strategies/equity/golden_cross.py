@@ -65,9 +65,9 @@ class GoldenCrossStrategy(BaseStrategy):
                 # Commodity ETFs (4)
                 "GLD", "SLV", "USO", "DBA",
                 
-                # Crypto (10)
-                "BTCUSD", "ETHUSD", "ADAUSD", "DOTUSD", "LINKUSD", 
-                "LTCUSD", "BCHUSD", "XRPUSD", "SOLUSD", "MATICUSD"
+                # Crypto (10) - Only available in Alpaca API
+                "BTCUSD", "ETHUSD", "DOTUSD", "LINKUSD", 
+                "LTCUSD", "BCHUSD", "XRPUSD", "SOLUSD", "AVAXUSD", "UNIUSD"
             ]  # 50 diverse assets across stocks, ETFs, crypto, commodities
 
         # Default configuration for Golden Cross

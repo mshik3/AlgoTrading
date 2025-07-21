@@ -22,6 +22,8 @@ import pandas as pd
 import requests
 from dataclasses import dataclass
 
+logger = logging.getLogger(__name__)
+
 # Alpaca SDK
 try:
     from alpaca.data import (
@@ -30,13 +32,15 @@ try:
         TimeFrame,
     )
     from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
+    import alpaca
 
     ALPACA_AVAILABLE = True
+    ALPACA_VERSION = alpaca.__version__
+    logger.info(f"Alpaca SDK version: {ALPACA_VERSION}")
 except ImportError:
     ALPACA_AVAILABLE = False
+    ALPACA_VERSION = None
     logging.warning("Alpaca SDK not installed. Install with: pip install alpaca-py")
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -88,19 +92,9 @@ class AlpacaDataCollector:
         self.last_reset = datetime.now()
         self.max_requests_per_minute = 200  # Free tier limit
 
-        # Crypto symbols mapping (Alpaca uses different symbols for crypto)
-        self.crypto_symbols = {
-            "BTCUSD": "BTC/USD",
-            "ETHUSD": "ETH/USD",
-            "ADAUSD": "ADA/USD",
-            "DOTUSD": "DOT/USD",
-            "LINKUSD": "LINK/USD",
-            "LTCUSD": "LTC/USD",
-            "BCHUSD": "BCH/USD",
-            "XRPUSD": "XRP/USD",
-            "SOLUSD": "SOL/USD",
-            "MATICUSD": "MATIC/USD",
-        }
+        # Dynamic crypto symbols mapping - will be populated from Alpaca Assets API
+        self.crypto_symbols = {}
+        self._load_crypto_symbols()
 
     def _load_config_from_env(self) -> AlpacaConfig:
         """Load Alpaca configuration from environment variables."""
@@ -115,13 +109,62 @@ class AlpacaDataCollector:
 
         # Validate API key format (basic validation)
         if len(api_key) < 10 or len(secret_key) < 10:
-            raise ValueError("Invalid API key format. Keys should be at least 10 characters long.")
+            raise ValueError(
+                "Invalid API key format. Keys should be at least 10 characters long."
+            )
 
         return AlpacaConfig(
             api_key=api_key,
             secret_key=secret_key,
             paper=True,  # Use paper trading for safety
         )
+
+    def _load_crypto_symbols(self):
+        """Load available crypto symbols from Alpaca Assets API."""
+        try:
+            from .alpaca_assets import get_available_crypto_symbols
+
+            available_symbols = get_available_crypto_symbols()
+
+            # Create mapping from our format to Alpaca format
+            for alpaca_symbol in available_symbols:
+                # Convert "BTC/USD" to "BTCUSD"
+                our_symbol = alpaca_symbol.replace("/", "")
+                self.crypto_symbols[our_symbol] = alpaca_symbol
+
+            logger.info(
+                f"Loaded {len(self.crypto_symbols)} crypto symbols from Alpaca Assets API"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to load crypto symbols from Assets API: {e}")
+            # Fallback to only symbols that are actually available in Alpaca's API
+            self.crypto_symbols = {
+                "BTCUSD": "BTC/USD",
+                "ETHUSD": "ETH/USD",
+                "SOLUSD": "SOL/USD",
+                "LINKUSD": "LINK/USD",
+                "DOTUSD": "DOT/USD",
+                "AVAXUSD": "AVAX/USD",
+                "UNIUSD": "UNI/USD",
+                "LTCUSD": "LTC/USD",
+                "BCHUSD": "BCH/USD",
+                "DOGEUSD": "DOGE/USD",
+                "SHIBUSD": "SHIB/USD",
+                "XRPUSD": "XRP/USD",
+                "AAVEUSD": "AAVE/USD",
+                "BATUSD": "BAT/USD",
+                "CRVUSD": "CRV/USD",
+                "GRTUSD": "GRT/USD",
+                "MKRUSD": "MKR/USD",
+                "PEPEUSD": "PEPE/USD",
+                "SUSHIUSD": "SUSHI/USD",
+                "XTZUSD": "XTZ/USD",
+                "YFIUSD": "YFI/USD",
+            }
+            logger.info(
+                f"Using fallback crypto symbols: {list(self.crypto_symbols.keys())}"
+            )
 
     def _is_crypto_symbol(self, symbol: str) -> bool:
         """Check if symbol is a crypto asset."""
@@ -133,11 +176,86 @@ class AlpacaDataCollector:
             return self.crypto_symbols[symbol]
         return symbol
 
+    def get_available_crypto_symbols(self) -> list:
+        """Get list of available crypto symbols in our format."""
+        return list(self.crypto_symbols.keys())
+
+    def is_crypto_symbol_available(self, symbol: str) -> bool:
+        """Check if a crypto symbol is available in Alpaca's API."""
+        return symbol in self.crypto_symbols
+
+    def suggest_alternative_crypto_symbols(
+        self, requested_symbol: str, limit: int = 5
+    ) -> list:
+        """Suggest alternative crypto symbols when the requested one is not available."""
+        available_symbols = self.get_available_crypto_symbols()
+
+        # Popular alternatives to suggest
+        popular_alternatives = ["BTCUSD", "ETHUSD", "SOLUSD", "LINKUSD", "DOTUSD"]
+
+        suggestions = []
+        for alt in popular_alternatives:
+            if alt in available_symbols and alt != requested_symbol:
+                suggestions.append(alt)
+                if len(suggestions) >= limit:
+                    break
+
+        return suggestions
+
     def _get_client(self, symbol: str):
         """Get the appropriate client for the symbol type."""
         if self._is_crypto_symbol(symbol):
             return self.crypto_client
         return self.stock_client
+
+    def _validate_bars_response(self, bars, symbol: str, alpaca_symbol: str) -> bool:
+        """
+        Validate the bars response structure based on Alpaca SDK version.
+
+        Args:
+            bars: The bars response from Alpaca API
+            symbol: Original symbol
+            alpaca_symbol: Alpaca-formatted symbol
+
+        Returns:
+            True if response is valid, False otherwise
+        """
+        if not bars:
+            logger.error(f"bars response is None for {symbol} ({alpaca_symbol})")
+            return False
+
+        # Log the response structure for debugging
+        logger.info(f"bars type: {type(bars)}")
+        logger.info(
+            f"bars attributes: {[attr for attr in dir(bars) if not attr.startswith('_')]}"
+        )
+
+        # Check if bars has a data attribute
+        if not hasattr(bars, "data"):
+            logger.error(
+                f"bars object missing 'data' attribute for {symbol} ({alpaca_symbol})"
+            )
+            return False
+
+        if bars.data is None:
+            logger.error(f"bars.data is None for {symbol} ({alpaca_symbol})")
+            return False
+
+        # Check if bars.data is a dictionary-like object
+        if not hasattr(bars.data, "items"):
+            logger.error(
+                f"bars.data is not a dictionary-like object for {symbol} ({alpaca_symbol}). Type: {type(bars.data)}"
+            )
+            return False
+
+        # Check if the symbol exists in the data
+        if alpaca_symbol not in bars.data:
+            logger.warning(
+                f"Symbol {alpaca_symbol} not found in bars.data. Available keys: {list(bars.data.keys())}"
+            )
+            return False
+
+        return True
 
     def _check_rate_limit(self):
         """Check and manage rate limits."""
@@ -159,6 +277,36 @@ class AlpacaDataCollector:
                 self.request_count = 0
                 self.last_reset = datetime.now()
 
+    def validate_symbol_availability(self, symbol: str) -> bool:
+        """
+        Validate if a symbol is available for data collection.
+
+        Args:
+            symbol: Symbol to validate
+
+        Returns:
+            True if symbol is available, False otherwise
+        """
+        # Check if it's a crypto symbol first
+        if self._is_crypto_symbol(symbol):
+            if not self.is_crypto_symbol_available(symbol):
+                logger.warning(f"Crypto symbol {symbol} is not available in Alpaca API")
+                suggestions = self.suggest_alternative_crypto_symbols(symbol)
+                if suggestions:
+                    logger.info(f"Available alternatives: {suggestions}")
+                return False
+            return True
+
+        # For symbols ending with USD that are not in crypto_symbols, they might be unavailable crypto
+        if symbol.endswith("USD") and not self._is_crypto_symbol(symbol):
+            logger.warning(
+                f"Symbol {symbol} appears to be crypto but is not available in Alpaca API"
+            )
+            return False
+
+        # For non-crypto symbols, assume they're available (stocks/ETFs)
+        return True
+
     def fetch_daily_data(
         self,
         symbol: str,
@@ -179,6 +327,10 @@ class AlpacaDataCollector:
             DataFrame with OHLCV data or None if failed
         """
         try:
+            # Validate symbol availability first
+            if not self.validate_symbol_availability(symbol):
+                return None
+
             self._check_rate_limit()
 
             # Convert period to dates if provided
@@ -186,6 +338,8 @@ class AlpacaDataCollector:
                 end_date = datetime.now()
                 if period == "5y":
                     start_date = end_date - timedelta(days=5 * 365)
+                elif period == "2y":
+                    start_date = end_date - timedelta(days=2 * 365)
                 elif period == "1y":
                     start_date = end_date - timedelta(days=365)
                 elif period == "6mo":
@@ -242,43 +396,63 @@ class AlpacaDataCollector:
                 logger.info(f"Stock request created for {symbol}")
                 bars = client.get_stock_bars(request)
 
-            logger.info(f"Response received: {type(bars)}")
-            if bars:
-                logger.info(
-                    f"BarSet length: {len(bars) if hasattr(bars, '__len__') else 'No length'}"
-                )
-                logger.info(f"BarSet attributes: {dir(bars)}")
-
-            if not bars:
-                logger.warning(f"No data returned for {symbol}")
+                # Validate the bars response structure
+            if not self._validate_bars_response(bars, symbol, alpaca_symbol):
+                # Provide better error reporting for crypto symbols
+                if self._is_crypto_symbol(symbol):
+                    if not self.is_crypto_symbol_available(symbol):
+                        suggestions = self.suggest_alternative_crypto_symbols(symbol)
+                        logger.error(
+                            f"Crypto symbol {symbol} is not available in Alpaca's API. "
+                            f"Available crypto symbols: {', '.join(self.get_available_crypto_symbols())}"
+                        )
+                        if suggestions:
+                            logger.info(
+                                f"Suggested alternatives: {', '.join(suggestions)}"
+                            )
+                    else:
+                        logger.error(
+                            f"Crypto symbol {symbol} is mapped but returned no data from API"
+                        )
+                else:
+                    logger.error(f"Stock symbol {symbol} returned no data from API")
                 return None
 
-            # Try different ways to access the data
+            # Try to access the data safely
             try:
-                # Method 1: Direct access to BarSet df
-                if hasattr(bars, "df"):
-                    df = bars.df
-                    logger.info(f"Found data with {len(df)} rows")
-                # Method 2: Direct access by symbol (use alpaca_symbol for crypto)
-                elif hasattr(bars, alpaca_symbol):
-                    df = bars[alpaca_symbol].df
-                    logger.info(f"Found data for {symbol} ({alpaca_symbol}) with {len(df)} rows")
-                # Method 3: Iterate through bars
-                elif hasattr(bars, "__iter__"):
-                    for bar in bars:
-                        if hasattr(bar, "symbol") and bar.symbol == alpaca_symbol:
-                            df = bar.df
-                            logger.info(f"Found data for {symbol} ({alpaca_symbol}) with {len(df)} rows")
-                            break
+                # Access data by symbol
+                if alpaca_symbol in bars.data:
+                    bar_list = bars.data[alpaca_symbol]
+                    if bar_list and len(bar_list) > 0:
+                        # Convert list of Bar objects to DataFrame
+                        data_list = []
+                        for bar in bar_list:
+                            if hasattr(bar, "__dict__"):
+                                data_list.append(bar.__dict__)
+                            else:
+                                data_list.append(bar)
+
+                        df = pd.DataFrame(data_list)
+                        logger.info(
+                            f"Found data for {symbol} ({alpaca_symbol}) with {len(df)} rows"
+                        )
+                    else:
+                        logger.warning(
+                            f"Empty data list for {symbol} ({alpaca_symbol})"
+                        )
+                        return None
                 else:
-                    logger.warning(f"No data found for {symbol} ({alpaca_symbol})")
+                    logger.warning(f"Symbol {alpaca_symbol} not found in bars data")
                     return None
+
             except Exception as e:
-                logger.error(f"Error accessing data for {symbol} ({alpaca_symbol}): {str(e)}")
+                logger.error(
+                    f"Error accessing data for {symbol} ({alpaca_symbol}): {str(e)}"
+                )
                 return None
 
             if df.empty:
-                logger.warning(f"Empty DataFrame for {symbol}")
+                logger.warning(f"Empty DataFrame for {symbol} ({alpaca_symbol})")
                 return None
 
             # Rename columns to match expected format
@@ -327,16 +501,17 @@ class AlpacaDataCollector:
             # Get appropriate client and symbol format
             client = self._get_client(symbol)
             alpaca_symbol = self._get_alpaca_symbol(symbol)
-            
+
             # Fetch today's data to get current price
             today = datetime.now()
-            
+
             # Create appropriate request based on asset type
             if self._is_crypto_symbol(symbol):
                 request = CryptoBarsRequest(
                     symbol_or_symbols=alpaca_symbol,
                     timeframe=TimeFrame.Day,
-                    start=today - timedelta(days=5),  # Get last 5 days to ensure we have today
+                    start=today
+                    - timedelta(days=5),  # Get last 5 days to ensure we have today
                     end=today,
                 )
                 bars = client.get_crypto_bars(request)
@@ -344,17 +519,35 @@ class AlpacaDataCollector:
                 request = StockBarsRequest(
                     symbol_or_symbols=alpaca_symbol,
                     timeframe=TimeFrame.Day,
-                    start=today - timedelta(days=5),  # Get last 5 days to ensure we have today
+                    start=today
+                    - timedelta(days=5),  # Get last 5 days to ensure we have today
                     end=today,
                 )
                 bars = client.get_stock_bars(request)
 
-            if bars and alpaca_symbol in bars:
-                latest_bar = bars[alpaca_symbol].df.iloc[-1]
-                self.request_count += 1
-                return float(latest_bar["close"])
+            # Validate the bars response structure
+            if not self._validate_bars_response(bars, symbol, alpaca_symbol):
+                return None
 
-            return None
+            # Get the latest bar data
+            try:
+                bar_list = bars.data[alpaca_symbol]
+                if bar_list and len(bar_list) > 0:
+                    latest_bar = bar_list[-1]
+                    if hasattr(latest_bar, "close"):
+                        self.request_count += 1
+                        return float(latest_bar.close)
+                    else:
+                        logger.error(
+                            f"Latest bar missing 'close' attribute for {symbol}"
+                        )
+                        return None
+                else:
+                    logger.warning(f"No bar data available for {symbol}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error accessing bar data for {symbol}: {str(e)}")
+                return None
 
         except Exception as e:
             logger.error(f"Error getting current price for {symbol}: {str(e)}")

@@ -84,7 +84,7 @@ class TestAssetCategorization:
         crypto_symbols = [
             "BTCUSD",
             "ETHUSD",
-            "ADAUSD",
+            "SOLUSD",
             "DOTUSD",
             "LINKUSD",
             "LTCUSD",
@@ -133,7 +133,7 @@ class TestAssetCategorization:
         """Test that symbol patterns are correctly identified."""
 
         # Test USD suffix pattern for crypto
-        usd_symbols = ["BTCUSD", "ETHUSD", "ADAUSD", "DOTUSD", "LINKUSD"]
+        usd_symbols = ["BTCUSD", "ETHUSD", "DOTUSD", "LINKUSD", "SOLUSD"]
         for symbol in usd_symbols:
             assert categorize_asset(symbol) == "Crypto"
 

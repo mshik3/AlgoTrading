@@ -148,17 +148,17 @@ class TodayInvestmentAnalyzer:
             "SLV",
             "USO",
             "DBA",
-            # Crypto (10)
+            # Crypto (10) - Only available in Alpaca API
             "BTCUSD",
             "ETHUSD",
-            "ADAUSD",
             "DOTUSD",
             "LINKUSD",
             "LTCUSD",
             "BCHUSD",
             "XRPUSD",
             "SOLUSD",
-            "MATICUSD",
+            "AVAXUSD",
+            "UNIUSD",
         ]
 
         # Initialize strategies
@@ -182,6 +182,11 @@ class TodayInvestmentAnalyzer:
         # Use only real market data from Alpaca
         for symbol in self.symbols:
             try:
+                # Validate symbol availability first
+                if not self.data_collector.validate_symbol_availability(symbol):
+                    logger.warning(f"Skipping {symbol} - not available in Alpaca API")
+                    continue
+                
                 # Use Alpaca collector to get real market data
                 data = self.data_collector.fetch_daily_data(symbol, period="2y")
 

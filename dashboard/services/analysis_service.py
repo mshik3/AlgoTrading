@@ -132,17 +132,17 @@ class DashboardAnalysisService:
             "SLV",
             "USO",
             "DBA",
-            # Crypto (10)
+            # Crypto (10) - Only available in Alpaca API
             "BTCUSD",
             "ETHUSD",
-            "ADAUSD",
             "DOTUSD",
             "LINKUSD",
             "LTCUSD",
             "BCHUSD",
             "XRPUSD",
             "SOLUSD",
-            "MATICUSD",
+            "AVAXUSD",
+            "UNIUSD",
         ]
 
         # Initialize strategies
@@ -153,7 +153,7 @@ class DashboardAnalysisService:
 
     def fetch_market_data(self) -> Dict[str, pd.DataFrame]:
         """
-        Fetch market data for all symbols.
+        Fetch market data for all symbols with retry logic.
 
         Returns:
             Dictionary mapping symbol -> OHLCV DataFrame
@@ -162,25 +162,49 @@ class DashboardAnalysisService:
 
         market_data = {}
         successful_fetches = 0
+        max_retries = 3
 
         for symbol in self.symbols:
-            try:
-                if self.data_collector:
-                    # Use real Alpaca data
-                    data = self.data_collector.fetch_daily_data(symbol, period="2y")
-                else:
-                    raise Exception("Alpaca data collector not available")
+            retry_count = 0
+            data = None
+            
+            while retry_count < max_retries and data is None:
+                try:
+                    if self.data_collector:
+                        # Validate symbol availability first
+                        if not self.data_collector.validate_symbol_availability(symbol):
+                            logger.warning(f"Skipping {symbol} - not available in Alpaca API")
+                            break
+                        
+                        # Use real Alpaca data
+                        data = self.data_collector.fetch_daily_data(symbol, period="2y")
+                    else:
+                        raise Exception("Alpaca data collector not available")
 
-                if data is not None and not data.empty and len(data) >= 250:
-                    market_data[symbol] = data
-                    successful_fetches += 1
-                    logger.info(f"✓ {symbol}: {len(data)} days of data")
-                else:
-                    logger.warning(f"✗ Insufficient data for {symbol}")
+                    if data is not None and not data.empty and len(data) >= 200:
+                        market_data[symbol] = data
+                        successful_fetches += 1
+                        logger.info(f"✓ {symbol}: {len(data)} days of data")
+                        break
+                    else:
+                        if data is None:
+                            logger.warning(f"✗ No data returned for {symbol} (attempt {retry_count + 1})")
+                        elif data.empty:
+                            logger.warning(f"✗ Empty data for {symbol} (attempt {retry_count + 1})")
+                        else:
+                            logger.warning(
+                                f"✗ Insufficient data for {symbol}: {len(data)} days (need >= 200) (attempt {retry_count + 1})"
+                            )
+                        data = None  # Reset for retry
 
-            except Exception as e:
-                logger.error(f"Error fetching data for {symbol}: {e}")
-                continue
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logger.warning(f"Error fetching data for {symbol} (attempt {retry_count}): {e}. Retrying...")
+                        import time
+                        time.sleep(1)  # Brief delay before retry
+                    else:
+                        logger.error(f"Error fetching data for {symbol} after {max_retries} attempts: {e}")
 
         logger.info(
             f"Successfully fetched data for {successful_fetches}/{len(self.symbols)} symbols"

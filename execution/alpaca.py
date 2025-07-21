@@ -85,19 +85,9 @@ class AlpacaTradingClient:
             api_key=config.api_key, secret_key=config.secret_key
         )
 
-        # Crypto symbols mapping (Alpaca uses different symbols for crypto)
-        self.crypto_symbols = {
-            "BTCUSD": "BTC/USD",
-            "ETHUSD": "ETH/USD",
-            "ADAUSD": "ADA/USD",
-            "DOTUSD": "DOT/USD",
-            "LINKUSD": "LINK/USD",
-            "LTCUSD": "LTC/USD",
-            "BCHUSD": "BCH/USD",
-            "XRPUSD": "XRP/USD",
-            "SOLUSD": "SOL/USD",
-            "MATICUSD": "MATIC/USD",
-        }
+        # Dynamic crypto symbols mapping - will be populated from Alpaca Assets API
+        self.crypto_symbols = {}
+        self._load_crypto_symbols()
 
         logger.info(f"Alpaca trading client initialized (paper: {config.paper})")
 
@@ -125,6 +115,34 @@ class AlpacaTradingClient:
             base_url=base_url,
             paper=True,  # Default to paper trading for safety
         )
+
+    def _load_crypto_symbols(self):
+        """Load available crypto symbols from Alpaca Assets API."""
+        try:
+            from data.alpaca_assets import get_available_crypto_symbols
+
+            available_symbols = get_available_crypto_symbols()
+
+            # Create mapping from our format to Alpaca format
+            for alpaca_symbol in available_symbols:
+                # Convert "BTC/USD" to "BTCUSD"
+                our_symbol = alpaca_symbol.replace("/", "")
+                self.crypto_symbols[our_symbol] = alpaca_symbol
+
+            logger.info(
+                f"Loaded {len(self.crypto_symbols)} crypto symbols from Alpaca Assets API"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to load crypto symbols from Assets API: {e}")
+            # Fallback to a minimal set of known working symbols
+            self.crypto_symbols = {
+                "BTCUSD": "BTC/USD",
+                "ETHUSD": "ETH/USD",
+                "SOLUSD": "SOL/USD",
+                "LINKUSD": "LINK/USD",
+            }
+            logger.info("Using fallback crypto symbols")
 
     def _is_crypto_symbol(self, symbol: str) -> bool:
         """Check if symbol is a crypto asset."""
@@ -505,12 +523,20 @@ class AlpacaTradingClient:
                         "symbol": order.symbol,
                         "side": order.side.value,
                         "quantity": int(order.qty),
-                        "filled_price": float(order.filled_avg_price) if order.filled_avg_price else 0.0,
+                        "filled_price": (
+                            float(order.filled_avg_price)
+                            if order.filled_avg_price
+                            else 0.0
+                        ),
                         "filled_at": order.filled_at,
                         "created_at": order.created_at,
                         "order_type": order.type.value,
                         "status": order.status.value,
-                        "total_value": float(order.filled_avg_price * order.qty) if order.filled_avg_price else 0.0,
+                        "total_value": (
+                            float(order.filled_avg_price * order.qty)
+                            if order.filled_avg_price
+                            else 0.0
+                        ),
                     }
                     transactions.append(transaction)
 
@@ -533,23 +559,25 @@ class AlpacaTradingClient:
         try:
             account = self.trading_client.get_account()
             positions = self.get_positions()
-            
+
             # Calculate basic metrics
             total_value = float(account.portfolio_value)
             cash = float(account.cash)
             positions_value = total_value - cash
             total_unrealized_pnl = sum(p["unrealized_pnl"] for p in positions)
-            
+
             # Get recent transactions for realized P&L
             recent_transactions = self.get_transaction_history(limit=50)
             realized_pnl = 0.0
-            
+
             # Calculate realized P&L from recent transactions
             for tx in recent_transactions:
                 if tx["side"] == "sell":
                     # This is a simplified calculation - in reality you'd need to track cost basis
-                    realized_pnl += tx["total_value"] * 0.01  # Assume 1% profit for demo
-            
+                    realized_pnl += (
+                        tx["total_value"] * 0.01
+                    )  # Assume 1% profit for demo
+
             return {
                 "total_value": total_value,
                 "cash": cash,
@@ -562,7 +590,7 @@ class AlpacaTradingClient:
                 "account_status": account.status,
                 "buying_power": float(account.buying_power),
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting portfolio performance: {str(e)}")
             return {}

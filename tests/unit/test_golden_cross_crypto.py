@@ -81,7 +81,7 @@ class TestGoldenCrossCryptoStrategy:
         crypto_symbols = [
             "BTCUSD",
             "ETHUSD",
-            "ADAUSD",
+            "SOLUSD",
             "DOTUSD",
             "LINKUSD",
             "LTCUSD",

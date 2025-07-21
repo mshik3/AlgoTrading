@@ -42,18 +42,18 @@ def categorize_asset(symbol: str) -> str:
     intl_etfs = {"EFA", "EEM", "FXI", "EWJ", "EWG", "EWU"}
     # Commodity ETFs
     commodity_etfs = {"GLD", "SLV", "USO", "DBA"}
-    # Crypto
+    # Crypto - Only available in Alpaca API
     crypto = {
         "BTCUSD",
         "ETHUSD",
-        "ADAUSD",
         "DOTUSD",
         "LINKUSD",
         "LTCUSD",
         "BCHUSD",
         "XRPUSD",
         "SOLUSD",
-        "MATICUSD",
+        "AVAXUSD",
+        "UNIUSD",
     }
 
     if symbol in us_etfs:
@@ -100,14 +100,14 @@ def get_asset_categories() -> Dict[str, Set[str]]:
         "Crypto": {
             "BTCUSD",
             "ETHUSD",
-            "ADAUSD",
             "DOTUSD",
             "LINKUSD",
             "LTCUSD",
             "BCHUSD",
             "XRPUSD",
             "SOLUSD",
-            "MATICUSD",
+            "AVAXUSD",
+            "UNIUSD",
         },
     }
 

@@ -313,7 +313,7 @@ class TestCryptoIntegration:
                         crypto_symbols = [
                             "BTCUSD",
                             "ETHUSD",
-                            "ADAUSD",
+                            "SOLUSD",
                             "DOTUSD",
                             "LINKUSD",
                         ]
@@ -384,7 +384,7 @@ class TestCryptoIntegration:
                                     crypto_symbols = [
                                         "BTCUSD",
                                         "ETHUSD",
-                                        "ADAUSD",
+                                        "SOLUSD",
                                         "DOTUSD",
                                         "LINKUSD",
                                     ]

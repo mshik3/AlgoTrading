@@ -64,21 +64,37 @@ class AlpacaDataCollector:
                 api_key=api_key, secret_key=secret_key
             )
 
-        # Crypto symbols mapping (Alpaca uses different symbols for crypto)
-        self.crypto_symbols = {
-            "BTCUSD": "BTC/USD",
-            "ETHUSD": "ETH/USD",
-            "ADAUSD": "ADA/USD",
-            "DOTUSD": "DOT/USD",
-            "LINKUSD": "LINK/USD",
-            "LTCUSD": "LTC/USD",
-            "BCHUSD": "BCH/USD",
-            "XRPUSD": "XRP/USD",
-            "SOLUSD": "SOL/USD",
-            "MATICUSD": "MATIC/USD",
-        }
+        # Dynamic crypto symbols mapping - will be populated from Alpaca Assets API
+        self.crypto_symbols = {}
+        self._load_crypto_symbols()
 
         logger.info("Alpaca data collector initialized")
+
+    def _load_crypto_symbols(self):
+        """Load available crypto symbols from Alpaca Assets API."""
+        try:
+            from .alpaca_assets import get_available_crypto_symbols
+            
+            available_symbols = get_available_crypto_symbols()
+            
+            # Create mapping from our format to Alpaca format
+            for alpaca_symbol in available_symbols:
+                # Convert "BTC/USD" to "BTCUSD"
+                our_symbol = alpaca_symbol.replace("/", "")
+                self.crypto_symbols[our_symbol] = alpaca_symbol
+            
+            logger.info(f"Loaded {len(self.crypto_symbols)} crypto symbols from Alpaca Assets API")
+            
+        except Exception as e:
+            logger.warning(f"Failed to load crypto symbols from Assets API: {e}")
+            # Fallback to a minimal set of known working symbols
+            self.crypto_symbols = {
+                "BTCUSD": "BTC/USD",
+                "ETHUSD": "ETH/USD",
+                "SOLUSD": "SOL/USD",
+                "LINKUSD": "LINK/USD",
+            }
+            logger.info("Using fallback crypto symbols")
 
     def _is_crypto_symbol(self, symbol: str) -> bool:
         """Check if symbol is a crypto asset."""
