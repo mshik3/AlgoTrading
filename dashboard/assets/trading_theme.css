@@ -281,6 +281,39 @@ body {
   background: var(--text-secondary);
 }
 
+/* Paper Trading Banner - SAFETY INDICATOR */
+.paper-trading-banner {
+  background: linear-gradient(135deg, #ff9800, #f57c00);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  box-shadow: 0 4px 15px rgba(255, 152, 0, 0.3);
+  border: 2px solid #ff6f00;
+  animation: pulse-glow 2s infinite;
+}
+
+@keyframes pulse-glow {
+  0% {
+    box-shadow: 0 4px 15px rgba(255, 152, 0, 0.3);
+  }
+  50% {
+    box-shadow: 0 4px 25px rgba(255, 152, 0, 0.6);
+  }
+  100% {
+    box-shadow: 0 4px 15px rgba(255, 152, 0, 0.3);
+  }
+}
+
+.paper-trading-banner:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(255, 152, 0, 0.4);
+}
+
 /* Analysis Section Styles */
 .analysis-container {
   background: var(--bg-secondary);
@@ -310,6 +343,96 @@ body {
 
 .analysis-container .btn-success {
   background: linear-gradient(135deg, var(--accent-secondary), #00bcd4);
+}
+
+/* Paper Trading Signal Cards */
+.signal-card {
+  transition: all 0.3s ease;
+  background: var(--bg-card);
+  border-radius: 12px;
+}
+
+.signal-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.signals-list {
+  max-height: 600px;
+  overflow-y: auto;
+  padding-right: 10px;
+}
+
+/* Paper Trade Buttons */
+.signal-card .btn {
+  border-radius: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.signal-card .btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.signal-card .btn-outline-success {
+  border: 2px solid var(--profit-color);
+  color: var(--profit-color);
+  background: transparent;
+}
+
+.signal-card .btn-outline-success:hover {
+  background: var(--profit-color);
+  color: white;
+  border-color: var(--profit-color);
+}
+
+.signal-card .btn-outline-danger {
+  border: 2px solid var(--loss-color);
+  color: var(--loss-color);
+  background: transparent;
+}
+
+.signal-card .btn-outline-danger:hover {
+  background: var(--loss-color);
+  color: white;
+  border-color: var(--loss-color);
+}
+
+/* Trade Confirmation Modal */
+.modal-content {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+}
+
+.modal-header {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-footer {
+  border-top: 1px solid var(--border-color);
+}
+
+/* Trade Alerts */
+#trade-alerts .alert {
+  border-radius: 8px;
+  border: none;
+  font-weight: 500;
+}
+
+#trade-alerts .alert-success {
+  background: rgba(38, 166, 154, 0.1);
+  color: var(--profit-color);
+  border-left: 4px solid var(--profit-color);
+}
+
+#trade-alerts .alert-danger {
+  background: rgba(239, 83, 80, 0.1);
+  color: var(--loss-color);
+  border-left: 4px solid var(--loss-color);
 }
 
 .analysis-container .btn-warning {

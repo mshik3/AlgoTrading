@@ -67,6 +67,21 @@ app.layout = dbc.Container(
         dcc.Interval(
             id="dashboard-interval", interval=30 * 1000, n_intervals=0  # 30 seconds
         ),
+        # Paper Trading Banner - SAFETY INDICATOR
+        html.Div(
+            [
+                html.Div(
+                    [
+                        html.I(className="fas fa-flask me-2"),
+                        html.Strong("PAPER TRADING MODE"),
+                        html.I(className="fas fa-flask ms-2"),
+                        html.Span(" - No Real Money Involved", className="ms-2"),
+                    ],
+                    className="paper-trading-banner",
+                )
+            ],
+            className="mb-3",
+        ),
         # Header Section
         html.Div(
             [
@@ -750,6 +765,56 @@ def _create_strategy_additional_info(strategy_id: str, metrics: dict) -> html.Di
 
             if ma_periods:
                 info_items.append(f"MA: {ma_periods[0]}/{ma_periods[1]}")
+
+            if info_items:
+                return html.Div(
+                    [
+                        html.Small(
+                            " | ".join(info_items),
+                            className="text-muted",
+                            style={"fontSize": "11px"},
+                        )
+                    ],
+                    className="mt-1",
+                )
+
+        elif strategy_id == "dual_momentum":
+            # Show dual momentum specific metrics
+            current_asset = strategy_specific.get("current_asset")
+            defensive_mode = strategy_specific.get("defensive_mode", False)
+            qualified_count = strategy_specific.get("qualified_assets_count", 0)
+
+            info_items = []
+            if current_asset:
+                info_items.append(f"Asset: {current_asset}")
+            elif defensive_mode:
+                info_items.append("Defensive Mode")
+
+            if qualified_count > 0:
+                info_items.append(f"Qualified: {qualified_count}")
+
+            if info_items:
+                return html.Div(
+                    [
+                        html.Small(
+                            " | ".join(info_items),
+                            className="text-muted",
+                            style={"fontSize": "11px"},
+                        )
+                    ],
+                    className="mt-1",
+                )
+
+        elif strategy_id == "sector_rotation":
+            # Show sector rotation specific metrics
+            top_sectors = strategy_specific.get("top_sectors", [])
+            benchmark = strategy_specific.get("benchmark_symbol", "SPY")
+
+            info_items = []
+            if top_sectors:
+                info_items.append(f"Top: {', '.join(top_sectors[:2])}")
+
+            info_items.append(f"Benchmark: {benchmark}")
 
             if info_items:
                 return html.Div(

@@ -20,7 +20,7 @@ try:
         CryptoHistoricalDataClient,
         TimeFrame,
     )
-    from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
+    from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest, StockLatestQuoteRequest
 
     ALPACA_AVAILABLE = True
 except ImportError:
@@ -28,7 +28,8 @@ except ImportError:
     logging.warning("Alpaca SDK not installed. Install with: pip install alpaca-py")
 
 from strategies.base import StrategySignal, SignalType
-from .paper import PaperPosition, PaperTrade
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +241,7 @@ class AlpacaTradingClient:
 
     def get_current_price(self, symbol: str) -> Optional[float]:
         """
-        Get current price for a symbol.
+        Get current price for a symbol with enhanced error handling and multiple fallbacks.
 
         Args:
             symbol: Stock or crypto symbol
@@ -253,32 +254,97 @@ class AlpacaTradingClient:
             client = self._get_data_client(symbol)
             alpaca_symbol = self._get_alpaca_symbol(symbol)
 
-            # Get today's data to get current price
-            today = datetime.now()
+            logger.debug(
+                f"Fetching price for {symbol} (Alpaca symbol: {alpaca_symbol})"
+            )
 
-            # Create appropriate request based on asset type
-            if self._is_crypto_symbol(symbol):
-                request = CryptoBarsRequest(
-                    symbol_or_symbols=alpaca_symbol,
-                    timeframe=TimeFrame.Day,
-                    start=today - timedelta(days=5),  # Get last 5 days
-                    end=today,
-                )
-                bars = client.get_crypto_bars(request)
-            else:
-                request = StockBarsRequest(
-                    symbol_or_symbols=alpaca_symbol,
-                    timeframe=TimeFrame.Day,
-                    start=today - timedelta(days=5),  # Get last 5 days
-                    end=today,
-                )
-                bars = client.get_stock_bars(request)
+            # Try multiple timeframes and date ranges for better reliability
+            attempts = [
+                # Recent intraday data (if market is open)
+                {"timeframe": TimeFrame.Minute, "days": 1},
+                # Recent hourly data
+                {"timeframe": TimeFrame.Hour, "days": 2},
+                # Daily data (fallback)
+                {"timeframe": TimeFrame.Day, "days": 10},
+            ]
 
-            if bars and alpaca_symbol in bars:
-                latest_bar = bars[alpaca_symbol].df.iloc[-1]
-                return float(latest_bar["close"])
+            for attempt in attempts:
+                try:
+                    timeframe = attempt["timeframe"]
+                    days_back = attempt["days"]
 
+                    start_date = datetime.now() - timedelta(days=days_back)
+                    end_date = datetime.now()
+
+                    # Create appropriate request based on asset type
+                    if self._is_crypto_symbol(symbol):
+                        request = CryptoBarsRequest(
+                            symbol_or_symbols=alpaca_symbol,
+                            timeframe=timeframe,
+                            start=start_date,
+                            end=end_date,
+                        )
+                        bars = client.get_crypto_bars(request)
+                    else:
+                        request = StockBarsRequest(
+                            symbol_or_symbols=alpaca_symbol,
+                            timeframe=timeframe,
+                            start=start_date,
+                            end=end_date,
+                        )
+                        bars = client.get_stock_bars(request)
+
+                    if bars and alpaca_symbol in bars:
+                        df = bars[alpaca_symbol].df
+                        if not df.empty:
+                            latest_price = float(df.iloc[-1]["close"])
+                            logger.info(
+                                f"✓ Got price for {symbol}: ${latest_price:.2f} (timeframe: {timeframe})"
+                            )
+                            return latest_price
+
+                    logger.debug(f"No data for {symbol} with timeframe {timeframe}")
+
+                except Exception as e:
+                    logger.debug(
+                        f"Failed attempt for {symbol} with timeframe {timeframe}: {str(e)}"
+                    )
+                    continue
+
+            # Final fallback: try to get latest quote
+            try:
+                logger.debug(f"Trying latest quote for {symbol}")
+
+                if not self._is_crypto_symbol(symbol):
+                    quote_request = StockLatestQuoteRequest(
+                        symbol_or_symbols=alpaca_symbol
+                    )
+                    quotes = client.get_stock_latest_quote(quote_request)
+
+                    if quotes and alpaca_symbol in quotes:
+                        quote = quotes[alpaca_symbol]
+                        # Use mid price (average of bid/ask)
+                        if hasattr(quote, "ask_price") and hasattr(quote, "bid_price"):
+                            mid_price = (
+                                float(quote.ask_price) + float(quote.bid_price)
+                            ) / 2
+                            logger.info(
+                                f"✓ Got quote price for {symbol}: ${mid_price:.2f}"
+                            )
+                            return mid_price
+                        elif hasattr(quote, "ask_price"):
+                            ask_price = float(quote.ask_price)
+                            logger.info(
+                                f"✓ Got ask price for {symbol}: ${ask_price:.2f}"
+                            )
+                            return ask_price
+
+            except Exception as e:
+                logger.debug(f"Quote request failed for {symbol}: {str(e)}")
+
+            logger.warning(f"Could not get any price data for {symbol}")
             return None
+
         except Exception as e:
             logger.error(f"Error getting current price for {symbol}: {str(e)}")
             return None
