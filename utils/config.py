@@ -28,6 +28,11 @@ def load_environment(env_file: str = ".env") -> bool:
     """
     global _environment_loaded
 
+    # Check if environment has already been loaded
+    if _environment_loaded:
+        logger.debug("Environment already loaded, skipping")
+        return True
+
     env_path = Path(env_file)
     if not env_path.exists():
         logger.warning(

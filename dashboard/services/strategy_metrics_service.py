@@ -39,10 +39,20 @@ class StrategyMetricsService:
     - Future strategies can be easily added
     """
 
+    _instance = None
+    _initialized = False
+
+    def __new__(cls):
+        """Singleton pattern to ensure only one instance exists."""
+        if cls._instance is None:
+            cls._instance = super(StrategyMetricsService, cls).__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        """Initialize the strategy metrics service."""
-        self.alpaca_service = AlpacaAccountService()
-        self.strategies = {
+        """Initialize the strategy metrics service (only once)."""
+        if not self._initialized:
+            self.alpaca_service = AlpacaAccountService()
+            self.strategies = {
             "golden_cross": {
                 "name": "Golden Cross Strategy",
                 "class": GoldenCrossStrategy,
@@ -80,9 +90,10 @@ class StrategyMetricsService:
             },
         }
 
-        # Initialize strategy instances
-        self.strategy_instances = {}
-        self._initialize_strategies()
+            # Initialize strategy instances
+            self.strategy_instances = {}
+            self._initialize_strategies()
+            StrategyMetricsService._initialized = True
 
     def _initialize_strategies(self):
         """Initialize strategy instances for metrics collection."""

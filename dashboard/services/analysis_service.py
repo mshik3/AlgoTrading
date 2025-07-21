@@ -48,7 +48,10 @@ class DashboardAnalysisService:
     def setup_environment(self):
         """Load environment variables and validate configuration."""
         try:
-            load_environment()
+            # Only load environment if not already loaded
+            from utils.config import _environment_loaded
+            if not _environment_loaded:
+                load_environment()
 
             # Check for required environment variables
             alpaca_key = get_env_var("ALPACA_API_KEY", default=None)

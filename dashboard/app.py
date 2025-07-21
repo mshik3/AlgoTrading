@@ -31,22 +31,38 @@ from dashboard.services.alpaca_account import AlpacaAccountService
 # Import strategy metrics service
 from dashboard.services.strategy_metrics_service import StrategyMetricsService
 
-# Initialize real Alpaca account service
-try:
-    alpaca_account = AlpacaAccountService()
-    if not alpaca_account.is_connected():
-        raise Exception("Alpaca connection failed")
-except Exception as e:
-    print(f"❌ Alpaca connection required: {e}")
-    print("Please set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables")
-    exit(1)
+# Service instances (will be initialized lazily)
+_alpaca_account_service = None
+_strategy_metrics_service = None
 
-# Initialize strategy metrics service
-try:
-    strategy_metrics_service = StrategyMetricsService()
-except Exception as e:
-    print(f"⚠️ Strategy metrics service initialization failed: {e}")
-    strategy_metrics_service = None
+
+def get_alpaca_account_service():
+    """Get or create Alpaca account service instance."""
+    global _alpaca_account_service
+    if _alpaca_account_service is None:
+        try:
+            _alpaca_account_service = AlpacaAccountService()
+            if not _alpaca_account_service.is_connected():
+                raise Exception("Alpaca connection failed")
+        except Exception as e:
+            print(f"❌ Alpaca connection required: {e}")
+            print(
+                "Please set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables"
+            )
+            raise
+    return _alpaca_account_service
+
+
+def get_strategy_metrics_service():
+    """Get or create strategy metrics service instance."""
+    global _strategy_metrics_service
+    if _strategy_metrics_service is None:
+        try:
+            _strategy_metrics_service = StrategyMetricsService()
+        except Exception as e:
+            print(f"⚠️ Strategy metrics service initialization failed: {e}")
+            return None
+    return _strategy_metrics_service
 
 
 # Initialize the Dash app with professional theme
@@ -304,6 +320,10 @@ def update_dashboard(n_intervals):
         # Get current time
         current_time = f"Last Updated: {datetime.now().strftime('%H:%M:%S')}"
 
+        # Get services using lazy loading
+        alpaca_account = get_alpaca_account_service()
+        strategy_metrics_service = get_strategy_metrics_service()
+
         # Get real portfolio summary from Alpaca
         portfolio = alpaca_account.get_account_summary()
         positions = alpaca_account.get_positions()
@@ -508,6 +528,7 @@ def get_multi_strategy_metrics():
         Dictionary with metrics for all strategies
     """
     try:
+        strategy_metrics_service = get_strategy_metrics_service()
         if strategy_metrics_service is None:
             # Fallback to basic metrics if service is not available
             return {
@@ -559,17 +580,6 @@ def get_multi_strategy_metrics():
             },
         }
 
-    except Exception as e:
-        print(f"Error getting real strategy metrics: {e}")
-        return {
-            "total_trades": 0,
-            "total_orders": 0,
-            "win_rate": None,
-            "last_signal": "N/A",
-            "account_connected": False,
-            "current_positions": 0,
-        }
-
 
 def create_strategy_monitor():
     """Create the strategy monitoring section with real multi-strategy data"""
@@ -596,11 +606,6 @@ def create_strategy_monitor():
         strategy_components.append(etf_rotation_component)
 
         return html.Div(strategy_components)
-
-    except Exception as e:
-        print(f"Error creating strategy monitor: {e}")
-        # Fallback to basic display
-        return _create_fallback_strategy_monitor()
 
     except Exception as e:
         print(f"Error creating strategy monitor: {e}")
@@ -1045,6 +1050,9 @@ def create_activity_feed():
     """Create the recent activity feed with real data"""
     # Get real account data and signals
     now = datetime.now()
+
+    # Get services using lazy loading
+    alpaca_account = get_alpaca_account_service()
 
     # Get real account status
     account_summary = alpaca_account.get_account_summary()

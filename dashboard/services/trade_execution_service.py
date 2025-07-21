@@ -46,7 +46,10 @@ class PaperTradingExecutionService:
     def setup_environment(self):
         """Load and validate environment configuration for paper trading."""
         try:
-            load_environment()
+            # Only load environment if not already loaded
+            from utils.config import _environment_loaded
+            if not _environment_loaded:
+                load_environment()
 
             self.api_key = get_env_var("ALPACA_API_KEY", default=None)
             self.secret_key = get_env_var("ALPACA_SECRET_KEY", default=None)

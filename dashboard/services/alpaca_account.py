@@ -31,15 +31,30 @@ class AlpacaAccountService:
     Provides real account data, positions, and cash balance.
     """
 
+    _instance = None
+    _initialized = False
+
+    def __new__(cls):
+        """Singleton pattern to ensure only one instance exists."""
+        if cls._instance is None:
+            cls._instance = super(AlpacaAccountService, cls).__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        """Initialize the Alpaca account service."""
-        self.setup_environment()
-        self.setup_alpaca_client()
+        """Initialize the Alpaca account service (only once)."""
+        if not self._initialized:
+            self.setup_environment()
+            self.setup_alpaca_client()
+            AlpacaAccountService._initialized = True
 
     def setup_environment(self):
         """Load environment variables and validate configuration."""
         try:
-            load_environment()
+            # Only load environment if not already loaded
+            from utils.config import _environment_loaded
+
+            if not _environment_loaded:
+                load_environment()
 
             # Check for required environment variables
             alpaca_key = get_env_var("ALPACA_API_KEY", default=None)
