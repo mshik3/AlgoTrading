@@ -3,7 +3,7 @@ Asset categorization utilities.
 Provides functionality to categorize different types of financial assets.
 """
 
-from typing import Dict, Set
+from typing import Dict, Set, List
 
 
 def categorize_asset(symbol: str) -> str:
@@ -110,6 +110,60 @@ def get_asset_categories() -> Dict[str, Set[str]]:
             "UNIUSD",
         },
     }
+
+
+def get_etf_rotation_universes() -> Dict[str, Dict[str, List[str]]]:
+    """
+    Get comprehensive ETF universes for rotation strategies.
+
+    Returns:
+        Dictionary mapping strategy type -> ETF universe configuration
+    """
+    return {
+        "dual_momentum": {
+            "US_Equities": ["SPY", "QQQ", "VTI", "IWM"],
+            "International": ["EFA", "EEM", "VEA", "VWO"],
+            "Bonds": ["TLT", "AGG", "BND", "LQD"],
+            "Real_Estate": ["VNQ", "IYR", "SCHH"],
+            "Commodities": ["GLD", "SLV", "USO", "DBA"],
+            "Cash_Equivalents": ["SHY", "BIL", "SHV"],
+        },
+        "sector_rotation": {
+            "Technology": ["XLK", "VGT", "SMH"],
+            "Financials": ["XLF", "VFH", "KBE"],
+            "Healthcare": ["XLV", "VHT", "IHI"],
+            "Consumer_Discretionary": ["XLY", "VCR", "XRT"],
+            "Consumer_Staples": ["XLP", "VDC", "XLP"],
+            "Industrials": ["XLI", "VIS", "XAR"],
+            "Energy": ["XLE", "VDE", "XOP"],
+            "Materials": ["XLB", "VAW", "XME"],
+            "Real_Estate": ["XLRE", "VNQ", "IYR"],
+            "Utilities": ["XLU", "VPU", "XLU"],
+            "Communications": ["XLC", "VOX", "XLC"],
+        },
+        "multi_asset": {
+            "US_Stocks": ["SPY", "QQQ", "VTI", "IWM"],
+            "International_Stocks": ["EFA", "EEM", "VEA", "VWO"],
+            "Bonds": ["TLT", "AGG", "BND", "LQD"],
+            "Real_Estate": ["VNQ", "IYR", "SCHH"],
+            "Commodities": ["GLD", "SLV", "USO", "DBA"],
+            "Cash": ["SHY", "BIL", "SHV"],
+        },
+    }
+
+
+def get_etf_universe_for_strategy(strategy_type: str) -> Dict[str, List[str]]:
+    """
+    Get ETF universe for a specific rotation strategy.
+
+    Args:
+        strategy_type: Type of rotation strategy ('dual_momentum', 'sector_rotation', 'multi_asset')
+
+    Returns:
+        ETF universe configuration for the strategy
+    """
+    universes = get_etf_rotation_universes()
+    return universes.get(strategy_type, {})
 
 
 def is_crypto_symbol(symbol: str) -> bool:

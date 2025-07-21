@@ -28,6 +28,9 @@ from dashboard.components.analysis import (
 # Import real Alpaca account service
 from dashboard.services.alpaca_account import AlpacaAccountService
 
+# Import strategy metrics service
+from dashboard.services.strategy_metrics_service import StrategyMetricsService
+
 # Initialize real Alpaca account service
 try:
     alpaca_account = AlpacaAccountService()
@@ -37,6 +40,13 @@ except Exception as e:
     print(f"❌ Alpaca connection required: {e}")
     print("Please set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables")
     exit(1)
+
+# Initialize strategy metrics service
+try:
+    strategy_metrics_service = StrategyMetricsService()
+except Exception as e:
+    print(f"⚠️ Strategy metrics service initialization failed: {e}")
+    strategy_metrics_service = None
 
 
 # Initialize the Dash app with professional theme
@@ -344,7 +354,7 @@ def update_dashboard(n_intervals):
         # Build positions table
         positions_table = create_positions_table(positions)
 
-        # Build strategy monitor
+        # Build strategy monitor with multi-strategy support
         strategy_monitor = create_strategy_monitor()
 
         # Build portfolio chart
@@ -475,60 +485,63 @@ def create_empty_positions_table():
     )
 
 
-def get_real_strategy_metrics():
+def get_multi_strategy_metrics():
     """
-    Get real strategy metrics from Alpaca account data.
+    Get real strategy metrics for all strategies from the strategy metrics service.
 
     Returns:
-        Dictionary with real strategy metrics
+        Dictionary with metrics for all strategies
     """
     try:
-        # Get recent orders from Alpaca
-        recent_orders = alpaca_account.get_recent_orders(limit=100)
+        if strategy_metrics_service is None:
+            # Fallback to basic metrics if service is not available
+            return {
+                "golden_cross": {
+                    "name": "Golden Cross Strategy",
+                    "status": "ERROR",
+                    "account_connected": False,
+                    "total_trades": 0,
+                    "win_rate": None,
+                    "last_signal": "N/A",
+                    "is_active": False,
+                },
+                "mean_reversion": {
+                    "name": "Mean Reversion Strategy",
+                    "status": "ERROR",
+                    "account_connected": False,
+                    "total_trades": 0,
+                    "win_rate": None,
+                    "last_signal": "N/A",
+                    "is_active": False,
+                },
+            }
 
-        # Get current positions to calculate P&L
-        current_positions = alpaca_account.get_positions()
+        # Get metrics for all strategies
+        all_metrics = strategy_metrics_service.get_all_strategy_metrics()
+        return all_metrics
 
-        # Calculate basic metrics
-        total_orders = len(recent_orders)
-        filled_orders = [o for o in recent_orders if o.get("status") == "filled"]
-        total_filled = len(filled_orders)
-
-        # Calculate win rate from actual P&L data
-        win_rate = None
-        if total_filled > 0:
-            # Look at current positions for unrealized P&L
-            profitable_positions = 0
-            total_positions = len(current_positions)
-
-            if total_positions > 0:
-                for position in current_positions:
-                    if position.get("unrealized_pnl", 0) > 0:
-                        profitable_positions += 1
-
-                # Calculate win rate based on current position performance
-                win_rate = (
-                    (profitable_positions / total_positions) * 100
-                    if total_positions > 0
-                    else None
-                )
-            else:
-                # No current positions, can't calculate win rate without historical P&L
-                win_rate = None
-
-        # Get last signal
-        last_signal = "NONE"
-        if filled_orders:
-            last_order = filled_orders[0]  # Most recent order
-            last_signal = last_order.get("action", "NONE").upper()
-
+    except Exception as e:
+        print(f"Error getting multi-strategy metrics: {e}")
+        # Return fallback metrics
         return {
-            "total_trades": total_filled,
-            "total_orders": total_orders,
-            "win_rate": win_rate,
-            "last_signal": last_signal,
-            "account_connected": alpaca_account.is_connected(),
-            "current_positions": len(current_positions),
+            "golden_cross": {
+                "name": "Golden Cross Strategy",
+                "status": "ERROR",
+                "account_connected": False,
+                "total_trades": 0,
+                "win_rate": None,
+                "last_signal": "N/A",
+                "is_active": False,
+            },
+            "mean_reversion": {
+                "name": "Mean Reversion Strategy",
+                "status": "ERROR",
+                "account_connected": False,
+                "total_trades": 0,
+                "win_rate": None,
+                "last_signal": "N/A",
+                "is_active": False,
+            },
         }
 
     except Exception as e:
@@ -544,25 +557,60 @@ def get_real_strategy_metrics():
 
 
 def create_strategy_monitor():
-    """Create the strategy monitoring section with real Alpaca data"""
+    """Create the strategy monitoring section with real multi-strategy data"""
     try:
-        # Get real strategy metrics from Alpaca
-        metrics = get_real_strategy_metrics()
+        # Get real strategy metrics for all strategies
+        all_metrics = get_multi_strategy_metrics()
 
-        # Determine status and styling based on real data
-        if not metrics["account_connected"]:
+        strategy_components = []
+
+        # Create components for each strategy
+        for strategy_id, metrics in all_metrics.items():
+            strategy_component = _create_strategy_component(strategy_id, metrics)
+            strategy_components.append(strategy_component)
+
+        # Add ETF Rotation Strategy as "Coming Soon"
+        etf_rotation_component = html.Div(
+            [
+                html.Span(className="strategy-indicator inactive"),
+                html.Span("ETF Rotation Strategy", className="strategy-name"),
+                html.Small("Coming Soon...", className="text-muted"),
+            ],
+            className="mb-3",
+        )
+        strategy_components.append(etf_rotation_component)
+
+        return html.Div(strategy_components)
+
+    except Exception as e:
+        print(f"Error creating strategy monitor: {e}")
+        # Fallback to basic display
+        return _create_fallback_strategy_monitor()
+
+    except Exception as e:
+        print(f"Error creating strategy monitor: {e}")
+        # Fallback to basic display
+        return _create_fallback_strategy_monitor()
+
+
+def _create_strategy_component(strategy_id: str, metrics: dict) -> html.Div:
+    """Create a strategy component with metrics display."""
+    try:
+        # Determine status and styling based on metrics
+        if not metrics.get("account_connected", False):
             status = "DISCONNECTED"
             status_class = "bg-warning"
             last_signal = "N/A"
             last_signal_class = "bg-secondary"
             win_rate = "N/A"
             total_trades = "N/A"
+            indicator_class = "strategy-indicator inactive"
         else:
-            status = "ACTIVE"
-            status_class = "bg-success"
+            status = "ACTIVE" if metrics.get("is_active", False) else "INACTIVE"
+            status_class = "bg-success" if status == "ACTIVE" else "bg-secondary"
 
             # Get last signal
-            last_signal = metrics["last_signal"]
+            last_signal = metrics.get("last_signal", "NONE")
             if last_signal == "BUY":
                 last_signal_class = "bg-primary"
             elif last_signal == "SELL":
@@ -571,181 +619,277 @@ def create_strategy_monitor():
                 last_signal_class = "bg-secondary"
 
             # Get real trade metrics
-            total_trades = metrics["total_trades"]
-            if metrics["win_rate"] is not None:
-                win_rate = f"{metrics['win_rate']:.0f}%"
+            total_trades = metrics.get("total_trades", 0)
+            win_rate_raw = metrics.get("win_rate")
+            if win_rate_raw is not None:
+                win_rate = f"{win_rate_raw:.0f}%"
             else:
                 win_rate = "N/A"
 
+            indicator_class = (
+                "strategy-indicator active"
+                if status == "ACTIVE"
+                else "strategy-indicator inactive"
+            )
+
+        # Create strategy-specific additional info
+        additional_info = _create_strategy_additional_info(strategy_id, metrics)
+
         return html.Div(
             [
-                # Golden Cross Strategy Status
+                html.Span(className=indicator_class),
+                html.Span(
+                    metrics.get("name", "Unknown Strategy"), className="strategy-name"
+                ),
                 html.Div(
                     [
-                        html.Span(
-                            className=(
-                                "strategy-indicator active"
-                                if metrics["account_connected"]
-                                else "strategy-indicator inactive"
-                            )
-                        ),
-                        html.Span("Golden Cross Strategy", className="strategy-name"),
-                        html.Div(
+                        dbc.Row(
                             [
-                                dbc.Row(
+                                dbc.Col(
                                     [
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Status: ", className="text-muted"
-                                                ),
-                                                html.Span(
-                                                    status,
-                                                    className=f"badge {status_class}",
-                                                ),
-                                            ],
-                                            md=6,
-                                        ),
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Last Signal: ",
-                                                    className="text-muted",
-                                                ),
-                                                html.Span(
-                                                    last_signal,
-                                                    className=f"badge {last_signal_class}",
-                                                ),
-                                            ],
-                                            md=6,
-                                        ),
-                                    ]
-                                ),
-                                dbc.Row(
-                                    [
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Win Rate: ", className="text-muted"
-                                                ),
-                                                html.Span(
-                                                    win_rate,
-                                                    style=(
-                                                        {"color": "var(--profit-color)"}
-                                                        if win_rate != "N/A"
-                                                        else {}
-                                                    ),
-                                                ),
-                                            ],
-                                            md=6,
-                                        ),
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Total Trades: ",
-                                                    className="text-muted",
-                                                ),
-                                                html.Span(str(total_trades)),
-                                            ],
-                                            md=6,
+                                        html.Small("Status: ", className="text-muted"),
+                                        html.Span(
+                                            status, className=f"badge {status_class}"
                                         ),
                                     ],
-                                    className="mt-2",
+                                    md=6,
+                                ),
+                                dbc.Col(
+                                    [
+                                        html.Small(
+                                            "Last Signal: ", className="text-muted"
+                                        ),
+                                        html.Span(
+                                            last_signal,
+                                            className=f"badge {last_signal_class}",
+                                        ),
+                                    ],
+                                    md=6,
                                 ),
                             ]
                         ),
-                    ],
-                    className="mb-3",
-                ),
-                # Add more strategies here as they are implemented
-                html.Div(
-                    [
-                        html.Span(className="strategy-indicator inactive"),
-                        html.Span("Mean Reversion Strategy", className="strategy-name"),
-                        html.Small("Coming Soon...", className="text-muted"),
-                    ],
-                    className="mb-3",
-                ),
-                html.Div(
-                    [
-                        html.Span(className="strategy-indicator inactive"),
-                        html.Span("ETF Rotation Strategy", className="strategy-name"),
-                        html.Small("Coming Soon...", className="text-muted"),
+                        dbc.Row(
+                            [
+                                dbc.Col(
+                                    [
+                                        html.Small(
+                                            "Win Rate: ", className="text-muted"
+                                        ),
+                                        html.Span(
+                                            win_rate,
+                                            style=(
+                                                {"color": "var(--profit-color)"}
+                                                if win_rate != "N/A"
+                                                else {}
+                                            ),
+                                        ),
+                                    ],
+                                    md=6,
+                                ),
+                                dbc.Col(
+                                    [
+                                        html.Small(
+                                            "Total Trades: ", className="text-muted"
+                                        ),
+                                        html.Span(str(total_trades)),
+                                    ],
+                                    md=6,
+                                ),
+                            ],
+                            className="mt-2",
+                        ),
+                        additional_info,
                     ]
                 ),
-            ]
+            ],
+            className="mb-3",
         )
 
     except Exception as e:
-        print(f"Error creating strategy monitor: {e}")
-        # Fallback to basic display
-        return html.Div(
-            [
-                html.Div(
+        print(f"Error creating strategy component for {strategy_id}: {e}")
+        return _create_error_strategy_component(strategy_id)
+
+
+def _create_strategy_additional_info(strategy_id: str, metrics: dict) -> html.Div:
+    """Create strategy-specific additional information display."""
+    try:
+        strategy_specific = metrics.get("strategy_specific", {})
+
+        if strategy_id == "mean_reversion":
+            # Show mean reversion specific metrics
+            avg_holding = strategy_specific.get("avg_holding_period_days")
+            enhancements = strategy_specific.get("enhancements", [])
+
+            info_items = []
+            if avg_holding is not None:
+                info_items.append(f"Avg Hold: {avg_holding:.1f}d")
+
+            if enhancements:
+                info_items.append(f"Features: {len(enhancements)}")
+
+            if info_items:
+                return html.Div(
                     [
-                        html.Span(className="strategy-indicator inactive"),
-                        html.Span("Golden Cross Strategy", className="strategy-name"),
-                        html.Div(
-                            [
-                                dbc.Row(
-                                    [
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Status: ", className="text-muted"
-                                                ),
-                                                html.Span(
-                                                    "ERROR", className="badge bg-danger"
-                                                ),
-                                            ],
-                                            md=6,
-                                        ),
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Last Signal: ",
-                                                    className="text-muted",
-                                                ),
-                                                html.Span(
-                                                    "N/A",
-                                                    className="badge bg-secondary",
-                                                ),
-                                            ],
-                                            md=6,
-                                        ),
-                                    ]
-                                ),
-                                dbc.Row(
-                                    [
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Win Rate: ", className="text-muted"
-                                                ),
-                                                html.Span("N/A"),
-                                            ],
-                                            md=6,
-                                        ),
-                                        dbc.Col(
-                                            [
-                                                html.Small(
-                                                    "Total Trades: ",
-                                                    className="text-muted",
-                                                ),
-                                                html.Span("N/A"),
-                                            ],
-                                            md=6,
-                                        ),
-                                    ],
-                                    className="mt-2",
-                                ),
-                            ]
-                        ),
+                        html.Small(
+                            " | ".join(info_items),
+                            className="text-muted",
+                            style={"fontSize": "11px"},
+                        )
                     ],
-                    className="mb-3",
-                ),
-            ]
-        )
+                    className="mt-1",
+                )
+
+        elif strategy_id == "golden_cross":
+            # Show golden cross specific metrics
+            crossover_signals = strategy_specific.get("crossover_signals", 0)
+            ma_periods = strategy_specific.get("ma_periods", [50, 200])
+
+            info_items = []
+            if crossover_signals > 0:
+                info_items.append(f"Crossovers: {crossover_signals}")
+
+            if ma_periods:
+                info_items.append(f"MA: {ma_periods[0]}/{ma_periods[1]}")
+
+            if info_items:
+                return html.Div(
+                    [
+                        html.Small(
+                            " | ".join(info_items),
+                            className="text-muted",
+                            style={"fontSize": "11px"},
+                        )
+                    ],
+                    className="mt-1",
+                )
+
+        return html.Div()  # Empty div if no additional info
+
+    except Exception as e:
+        print(f"Error creating additional info for {strategy_id}: {e}")
+        return html.Div()
+
+
+def _create_error_strategy_component(strategy_id: str) -> html.Div:
+    """Create an error state strategy component."""
+    return html.Div(
+        [
+            html.Span(className="strategy-indicator inactive"),
+            html.Span(f"Strategy {strategy_id.title()}", className="strategy-name"),
+            html.Div(
+                [
+                    dbc.Row(
+                        [
+                            dbc.Col(
+                                [
+                                    html.Small("Status: ", className="text-muted"),
+                                    html.Span("ERROR", className="badge bg-danger"),
+                                ],
+                                md=6,
+                            ),
+                            dbc.Col(
+                                [
+                                    html.Small("Last Signal: ", className="text-muted"),
+                                    html.Span("N/A", className="badge bg-secondary"),
+                                ],
+                                md=6,
+                            ),
+                        ]
+                    ),
+                    dbc.Row(
+                        [
+                            dbc.Col(
+                                [
+                                    html.Small("Win Rate: ", className="text-muted"),
+                                    html.Span("N/A"),
+                                ],
+                                md=6,
+                            ),
+                            dbc.Col(
+                                [
+                                    html.Small(
+                                        "Total Trades: ", className="text-muted"
+                                    ),
+                                    html.Span("N/A"),
+                                ],
+                                md=6,
+                            ),
+                        ],
+                        className="mt-2",
+                    ),
+                ]
+            ),
+        ],
+        className="mb-3",
+    )
+
+
+def _create_fallback_strategy_monitor() -> html.Div:
+    """Create a fallback strategy monitor when metrics service fails."""
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Span(className="strategy-indicator inactive"),
+                    html.Span("Golden Cross Strategy", className="strategy-name"),
+                    html.Div(
+                        [
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            html.Small(
+                                                "Status: ", className="text-muted"
+                                            ),
+                                            html.Span(
+                                                "ERROR", className="badge bg-danger"
+                                            ),
+                                        ],
+                                        md=6,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            html.Small(
+                                                "Last Signal: ", className="text-muted"
+                                            ),
+                                            html.Span(
+                                                "N/A", className="badge bg-secondary"
+                                            ),
+                                        ],
+                                        md=6,
+                                    ),
+                                ]
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            html.Small(
+                                                "Win Rate: ", className="text-muted"
+                                            ),
+                                            html.Span("N/A"),
+                                        ],
+                                        md=6,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            html.Small(
+                                                "Total Trades: ", className="text-muted"
+                                            ),
+                                            html.Span("N/A"),
+                                        ],
+                                        md=6,
+                                    ),
+                                ],
+                                className="mt-2",
+                            ),
+                        ]
+                    ),
+                ],
+                className="mb-3",
+            ),
+        ]
+    )
 
 
 def create_portfolio_chart():

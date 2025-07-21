@@ -494,6 +494,110 @@ class TechnicalIndicators:
             .add_volume_sma(20)
         )  # Volume trend
 
+    def add_momentum_indicators(self, lookback: int = 252) -> "TechnicalIndicators":
+        """
+        Add momentum indicators for rotation strategies.
+
+        Args:
+            lookback: Lookback period for momentum calculations
+
+        Returns:
+            TechnicalIndicators instance
+        """
+        # Add momentum indicators
+        self.add_momentum_score(lookback)
+        self.add_relative_strength(lookback)
+        self.add_momentum_consistency(lookback)
+        
+        return self
+
+    def add_momentum_score(self, lookback: int = 252, column: str = "Close") -> "TechnicalIndicators":
+        """
+        Add momentum score indicator.
+
+        Args:
+            lookback: Lookback period
+            column: Price column to use
+
+        Returns:
+            TechnicalIndicators instance
+        """
+        if len(self.data) < lookback:
+            return self
+        
+        # Calculate momentum score (simple return)
+        momentum_scores = []
+        for i in range(len(self.data)):
+            if i < lookback:
+                momentum_scores.append(np.nan)
+            else:
+                start_price = self.data.iloc[i - lookback][column]
+                end_price = self.data.iloc[i][column]
+                momentum = (end_price / start_price - 1) if start_price > 0 else np.nan
+                momentum_scores.append(momentum)
+        
+        self.data[f"Momentum_{lookback}"] = momentum_scores
+        return self
+
+    def add_relative_strength(self, lookback: int = 252, column: str = "Close") -> "TechnicalIndicators":
+        """
+        Add relative strength indicator (requires benchmark data).
+
+        Args:
+            lookback: Lookback period
+            column: Price column to use
+
+        Returns:
+            TechnicalIndicators instance
+        """
+        # Note: This is a placeholder - actual relative strength requires benchmark data
+        # In practice, this would be calculated in the strategy using benchmark data
+        rs_scores = [np.nan] * len(self.data)
+        self.data[f"RelativeStrength_{lookback}"] = rs_scores
+        return self
+
+    def add_momentum_consistency(self, lookback: int = 252, periods: int = 4, column: str = "Close") -> "TechnicalIndicators":
+        """
+        Add momentum consistency indicator.
+
+        Args:
+            lookback: Total lookback period
+            periods: Number of sub-periods
+            column: Price column to use
+
+        Returns:
+            TechnicalIndicators instance
+        """
+        if len(self.data) < lookback:
+            return self
+        
+        consistency_scores = []
+        period_length = lookback // periods
+        
+        for i in range(len(self.data)):
+            if i < lookback:
+                consistency_scores.append(np.nan)
+            else:
+                period_scores = []
+                for j in range(periods):
+                    start_idx = i - lookback + j * period_length
+                    end_idx = i - lookback + (j + 1) * period_length if j < periods - 1 else i
+                    
+                    if start_idx >= 0 and end_idx > start_idx:
+                        start_price = self.data.iloc[start_idx][column]
+                        end_price = self.data.iloc[end_idx][column]
+                        period_return = (end_price / start_price - 1) if start_price > 0 else 0
+                        period_scores.append(1.0 if period_return > 0 else 0.0)
+                
+                if period_scores:
+                    consistency = sum(period_scores) / len(period_scores)
+                    consistency_scores.append(consistency)
+                else:
+                    consistency_scores.append(np.nan)
+        
+        self.data[f"MomentumConsistency_{lookback}"] = consistency_scores
+        return self
+
     def get_data(self) -> pd.DataFrame:
         """Return the data with all calculated indicators."""
         return self.data
