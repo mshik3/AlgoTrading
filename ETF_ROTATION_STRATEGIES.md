@@ -423,3 +423,20 @@ custom_universe = {
 ETF rotation strategies provide a systematic approach to tactical asset allocation that can potentially enhance returns while managing risk. The implemented strategies offer flexibility and extensibility while maintaining robust risk management and performance tracking capabilities.
 
 For questions or contributions, please refer to the main project documentation or create an issue in the repository.
+
+## Position-Aware Logic (Best Practice)
+
+Modern professional trading systems are always position-aware. This means:
+
+- Strategies check current broker/account positions before making any recommendation.
+- Signal generation logic considers existing holdings and their sizes.
+- Instead of always recommending a BUY, the strategy will:
+  - Recommend scaling up if the current position is below the target.
+  - Recommend scaling down if the current position is above the target.
+  - Recommend holding if the current position matches the target.
+  - Recommend closing if the asset should no longer be held.
+- This approach prevents redundant trades, reduces transaction costs, and ensures portfolio allocations are accurate.
+
+**Implementation Note:**
+
+The ETF rotation strategies in this repository now synchronize with your broker (e.g., Alpaca) and generate position-aware signals. This is standard practice in institutional and professional algorithmic trading systems.

@@ -6,10 +6,11 @@ Provides abstract interfaces and common functionality for all trading strategies
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Tuple
 import pandas as pd
 import logging
 from datetime import datetime
+import numpy as np
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -23,6 +24,16 @@ class SignalType(Enum):
     HOLD = "HOLD"
     CLOSE_LONG = "CLOSE_LONG"
     CLOSE_SHORT = "CLOSE_SHORT"
+
+
+class PositionAction(Enum):
+    """Types of position actions based on current vs target positions."""
+
+    OPEN_NEW = "OPEN_NEW"  # No current position, should open new
+    INCREASE = "INCREASE"  # Current position exists, should increase
+    DECREASE = "DECREASE"  # Current position exists, should decrease
+    MAINTAIN = "MAINTAIN"  # Current position matches target, no action
+    CLOSE = "CLOSE"  # Should close existing position
 
 
 @dataclass
@@ -41,6 +52,9 @@ class StrategySignal:
     timestamp: datetime = None
     strategy_name: str = ""
     metadata: Dict[str, Any] = None
+    position_action: Optional[PositionAction] = (
+        None  # New field for position-aware actions
+    )
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -55,22 +69,25 @@ class BaseStrategy(ABC):
     Provides common interface and functionality for strategy implementation.
     """
 
-    def __init__(self, name: str, symbols: List[str], **config):
+    def __init__(self, name: str, symbols: List[str], alpaca_client=None, **config):
         """
         Initialize the strategy.
 
         Args:
             name: Strategy name
             symbols: List of symbols to trade
+            alpaca_client: Optional AlpacaTradingClient for position synchronization
             **config: Strategy-specific configuration parameters
         """
         self.name = name
         self.symbols = symbols
+        self.alpaca_client = alpaca_client  # For broker position synchronization
         self.config = config
-        self.positions = {}  # Track current positions
+        self.positions = {}  # Track current positions (synced with broker)
         self.signals_history = []  # Track signal history
         self.performance_metrics = {}
         self.is_active = True
+        self.last_position_sync = None  # Track when positions were last synced
 
         # Default configuration
         self.default_config = {
@@ -80,12 +97,136 @@ class BaseStrategy(ABC):
             "min_confidence": 0.7,  # Minimum signal confidence to trade
             "max_positions": 5,  # Maximum concurrent positions
             "risk_per_trade": 0.02,  # 2% portfolio risk per trade
+            "position_sync_frequency": 300,  # Sync positions every 5 minutes
+            "min_position_change_pct": 0.05,  # 5% minimum change to trigger action
         }
 
         # Merge with provided config
         self.config = {**self.default_config, **self.config}
 
         logger.info(f"Initialized {self.name} strategy for symbols: {self.symbols}")
+
+    def sync_with_broker_positions(self, force_sync: bool = False) -> bool:
+        """
+        Synchronize strategy positions with actual broker positions.
+
+        Args:
+            force_sync: Force sync even if within frequency limit
+
+        Returns:
+            True if sync was successful, False otherwise
+        """
+        if not self.alpaca_client:
+            logger.warning(f"{self.name}: No Alpaca client available for position sync")
+            return False
+
+        # Check if we need to sync (frequency control)
+        if not force_sync and self.last_position_sync:
+            time_since_sync = (datetime.now() - self.last_position_sync).total_seconds()
+            if time_since_sync < self.config["position_sync_frequency"]:
+                return True  # Skip sync, positions are recent enough
+
+        try:
+            # Get real broker positions
+            broker_positions = self.alpaca_client.get_positions()
+
+            # Convert to strategy position format
+            synced_positions = {}
+            for pos in broker_positions:
+                synced_positions[pos["symbol"]] = {
+                    "quantity": pos["quantity"],
+                    "entry_price": pos["avg_price"],
+                    "current_price": pos["current_price"],
+                    "market_value": pos["market_value"],
+                    "unrealized_pnl": pos["unrealized_pnl"],
+                    "entry_date": datetime.now(),  # We don't have exact entry date from broker
+                    "stop_loss": None,  # Would need to be tracked separately
+                    "take_profit": None,  # Would need to be tracked separately
+                    "strategy_signal": None,  # Would need to be tracked separately
+                }
+
+            # Update strategy positions
+            old_position_count = len(self.positions)
+            self.positions = synced_positions
+            self.last_position_sync = datetime.now()
+
+            new_position_count = len(self.positions)
+            logger.info(
+                f"{self.name}: Synced {new_position_count} positions from broker "
+                f"(was {old_position_count})"
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"{self.name}: Error syncing with broker positions: {str(e)}")
+            return False
+
+    def determine_position_action(
+        self, symbol: str, target_quantity: int, current_price: float
+    ) -> Tuple[PositionAction, int]:
+        """
+        Determine what action to take based on current vs target position.
+
+        Args:
+            symbol: Asset symbol
+            target_quantity: Target quantity to hold
+            current_price: Current price of the asset
+
+        Returns:
+            Tuple of (PositionAction, quantity_to_trade)
+        """
+        current_quantity = self.positions.get(symbol, {}).get("quantity", 0)
+
+        if current_quantity == 0 and target_quantity > 0:
+            return PositionAction.OPEN_NEW, target_quantity
+        elif current_quantity > 0 and target_quantity == 0:
+            return PositionAction.CLOSE, current_quantity
+        elif current_quantity > 0 and target_quantity > 0:
+            # Calculate percentage change
+            if current_quantity > 0:
+                change_pct = abs(target_quantity - current_quantity) / current_quantity
+            else:
+                change_pct = 1.0  # Any change from 0 is 100%
+
+            # Check if change is significant enough
+            if change_pct < self.config["min_position_change_pct"]:
+                return PositionAction.MAINTAIN, 0
+            elif target_quantity > current_quantity:
+                return PositionAction.INCREASE, target_quantity - current_quantity
+            else:
+                return PositionAction.DECREASE, current_quantity - target_quantity
+        else:
+            return PositionAction.MAINTAIN, 0
+
+    def calculate_position_delta(
+        self,
+        symbol: str,
+        target_allocation: float,
+        portfolio_value: float,
+        current_price: float,
+    ) -> Tuple[int, PositionAction]:
+        """
+        Calculate the difference between current and target position sizes.
+
+        Args:
+            symbol: Asset symbol
+            target_allocation: Target allocation as percentage of portfolio
+            portfolio_value: Current portfolio value
+            current_price: Current price of the asset
+
+        Returns:
+            Tuple of (quantity_delta, position_action)
+        """
+        current_quantity = self.positions.get(symbol, {}).get("quantity", 0)
+        target_value = portfolio_value * target_allocation
+        target_quantity = int(target_value / current_price) if current_price > 0 else 0
+
+        action, quantity_to_trade = self.determine_position_action(
+            symbol, target_quantity, current_price
+        )
+
+        return quantity_to_trade, action
 
     @abstractmethod
     def generate_signals(
@@ -137,6 +278,7 @@ class BaseStrategy(ABC):
     def validate_signal(self, signal: StrategySignal) -> bool:
         """
         Validate a trading signal against strategy rules.
+        Now considers both internal and broker positions.
 
         Args:
             signal: The signal to validate
@@ -144,6 +286,10 @@ class BaseStrategy(ABC):
         Returns:
             True if signal is valid, False otherwise
         """
+        # Sync positions if we have an Alpaca client
+        if self.alpaca_client:
+            self.sync_with_broker_positions()
+
         # Check confidence threshold
         if signal.confidence < self.config["min_confidence"]:
             logger.debug(
@@ -155,16 +301,24 @@ class BaseStrategy(ABC):
         if (
             signal.signal_type in [SignalType.BUY]
             and len(self.positions) >= self.config["max_positions"]
+            and signal.symbol not in self.positions
         ):
             logger.debug(
                 f"Signal rejected: maximum positions limit {self.config['max_positions']} reached"
             )
             return False
 
-        # Check if we already have a position in this symbol
+        # Check if we already have a position in this symbol (for new positions only)
         if signal.symbol in self.positions and signal.signal_type == SignalType.BUY:
-            logger.debug(f"Signal rejected: already have position in {signal.symbol}")
-            return False
+            # Check if this is a position increase vs new position
+            if (
+                not signal.position_action
+                or signal.position_action == PositionAction.OPEN_NEW
+            ):
+                logger.debug(
+                    f"Signal rejected: already have position in {signal.symbol}"
+                )
+                return False
 
         return True
 
@@ -173,6 +327,7 @@ class BaseStrategy(ABC):
     ) -> int:
         """
         Calculate appropriate position size based on risk management rules.
+        Now accounts for existing positions.
 
         Args:
             signal: The trading signal
@@ -182,8 +337,12 @@ class BaseStrategy(ABC):
         Returns:
             Number of shares to trade
         """
+        # Get current position if it exists
+        current_quantity = self.positions.get(signal.symbol, {}).get("quantity", 0)
+
         # Calculate maximum position value based on portfolio percentage
         max_position_value = portfolio_value * self.config["max_position_size"]
+        max_shares = int(max_position_value / current_price) if current_price > 0 else 0
 
         # Calculate position size based on risk per trade
         risk_amount = portfolio_value * self.config["risk_per_trade"]
@@ -192,11 +351,15 @@ class BaseStrategy(ABC):
         if signal.stop_loss:
             stop_distance = abs(current_price - signal.stop_loss)
             risk_based_shares = int(risk_amount / stop_distance)
-            max_shares = int(max_position_value / current_price)
             shares = min(risk_based_shares, max_shares)
         else:
             # Default to max position size
-            shares = int(max_position_value / current_price)
+            shares = max_shares
+
+        # Ensure we don't exceed maximum position size
+        total_shares_after_trade = current_quantity + shares
+        if total_shares_after_trade > max_shares:
+            shares = max(0, max_shares - current_quantity)
 
         return max(1, shares)  # At least 1 share
 

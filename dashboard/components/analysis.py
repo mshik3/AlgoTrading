@@ -363,8 +363,8 @@ def create_signals_table(signals, analysis_type):
     signal_cards = []
 
     # Convert signals to table data and create action buttons
-    if analysis_type == "combined":
-        # Handle combined analysis with nested signals
+    if analysis_type in ["combined", "all_strategies"]:
+        # Handle combined analysis and all strategies with nested signals
         for strategy, strategy_signals in signals.items():
             for i, signal in enumerate(strategy_signals):
                 # Handle both object and dictionary formats
@@ -1087,8 +1087,8 @@ def find_signal_by_id(signals, signal_id, analysis_type):
         symbol = parts[-2]
         index = int(parts[-1])
 
-        if analysis_type == "combined":
-            # Combined analysis has nested structure
+        if analysis_type in ["combined", "all_strategies"]:
+            # Combined analysis and all strategies have nested structure
             if strategy_name in signals and index < len(signals[strategy_name]):
                 signal = signals[strategy_name][index]
                 # Signal is already in dictionary format after JSON serialization

@@ -96,6 +96,15 @@ The system will implement multiple diversified strategies across various assets 
 - 50% broad market ETFs (SPY, QQQ)
 - 50% large-cap individual stocks
 
+### Position-Aware Strategy Logic
+
+All strategies in this system are now position-aware, which is standard in professional trading systems:
+
+- The system checks your current broker/account positions before making any trade recommendation.
+- If you already hold a position, the strategy will only recommend scaling up, scaling down, holding, or closing, as appropriate.
+- This prevents redundant trades, reduces unnecessary transaction costs, and ensures your portfolio stays in sync with strategy targets.
+- Position-aware logic is a best practice for risk management and portfolio rebalancing in institutional trading.
+
 ## 4. Position Sizing & Risk Management
 
 ### 4.1 Position Sizing
@@ -290,6 +299,7 @@ By implementing this system with careful risk management and consistent evaluati
 
 - **Database**: PostgreSQL (local instance)
 - **Schema Design**: Single table approach for market data
+
   ```sql
   CREATE TABLE market_data (
       id SERIAL PRIMARY KEY,
@@ -305,6 +315,7 @@ By implementing this system with careful risk management and consistent evaluati
   );
 
   ```
+
 - **Storage Requirements**: ~10MB for initial dataset (5 years, 50 assets)
 - **Scalability**: Start simple, with option to partition if needed in future
 

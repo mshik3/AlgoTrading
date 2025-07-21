@@ -18,7 +18,7 @@ import logging
 from datetime import datetime
 
 from .rotation_base import BaseETFRotationStrategy
-from ..base import StrategySignal, SignalType
+from ..base import StrategySignal, SignalType, PositionAction
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +211,7 @@ class SectorRotationStrategy(BaseETFRotationStrategy):
     ) -> Optional[StrategySignal]:
         """
         Determine if we should enter a position in the given sector.
+        Now position-aware: considers existing positions for increase/decrease decisions.
 
         Args:
             symbol: Sector ETF symbol
@@ -219,9 +220,9 @@ class SectorRotationStrategy(BaseETFRotationStrategy):
         Returns:
             StrategySignal if should enter, None otherwise
         """
-        # Skip if we already have a position
-        if symbol in self.positions:
-            return None
+        # Sync with broker positions first
+        if self.alpaca_client:
+            self.sync_with_broker_positions()
 
         # Check if symbol is in top-ranked sectors
         if symbol not in self.sector_scores:
@@ -237,29 +238,66 @@ class SectorRotationStrategy(BaseETFRotationStrategy):
 
         current_price = data["Close"].iloc[-1]
 
+        # Get current position information
+        current_position = self.positions.get(symbol, {})
+        current_quantity = current_position.get("quantity", 0)
+
+        # Calculate target allocation based on equal weight
+        portfolio_value = 100000  # Default for signal generation
+        target_allocation = (
+            1.0 / self.config["max_positions"]
+        )  # Equal weight per sector
+
+        # Calculate position delta and action
+        quantity_delta, position_action = self.calculate_position_delta(
+            symbol, target_allocation, portfolio_value, current_price
+        )
+
+        # If no action needed, return None
+        if position_action == PositionAction.MAINTAIN or quantity_delta == 0:
+            return None
+
         # Calculate stop loss and take profit
         stop_loss = current_price * (1 - self.config["stop_loss_pct"])
         take_profit = current_price * (1 + self.config["take_profit_pct"])
 
+        # Determine signal type based on position action
+        if position_action in [PositionAction.OPEN_NEW, PositionAction.INCREASE]:
+            signal_type = SignalType.BUY
+        elif position_action == PositionAction.DECREASE:
+            signal_type = SignalType.SELL
+        elif position_action == PositionAction.CLOSE:
+            signal_type = SignalType.CLOSE_LONG
+        else:
+            return None
+
         signal = StrategySignal(
             symbol=symbol,
-            signal_type=SignalType.BUY,
+            signal_type=signal_type,
             confidence=confidence,
             price=current_price,
+            quantity=quantity_delta,
             stop_loss=stop_loss,
             take_profit=take_profit,
             strategy_name=self.name,
+            position_action=position_action,
             metadata={
                 "sector_scores": scores,
                 "entry_reason": "sector_rotation_qualified",
                 "momentum_lookback": self.config["momentum_lookback"],
                 "relative_strength_lookback": self.config["relative_strength_lookback"],
+                "current_quantity": current_quantity,
+                "target_quantity": int(
+                    portfolio_value * target_allocation / current_price
+                ),
+                "position_action": position_action.value,
             },
         )
 
         logger.info(
-            f"Sector Rotation BUY signal for {symbol}: combined_score={scores['combined_score']:.3f}, "
-            f"confidence={confidence:.3f}"
+            f"Sector Rotation {position_action.value} signal for {symbol}: "
+            f"current_qty={current_quantity}, target_delta={quantity_delta}, "
+            f"combined_score={scores['combined_score']:.3f}, confidence={confidence:.3f}"
         )
 
         return signal

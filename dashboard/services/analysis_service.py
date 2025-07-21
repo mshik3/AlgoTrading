@@ -50,6 +50,7 @@ class DashboardAnalysisService:
         try:
             # Only load environment if not already loaded
             from utils.config import _environment_loaded
+
             if not _environment_loaded:
                 load_environment()
 
@@ -460,13 +461,18 @@ class DashboardAnalysisService:
         logger.info("Running combined ETF rotation analysis...")
 
         try:
-            # Initialize both ETF strategies
+            # Get Alpaca client for position synchronization
+            alpaca_client = self._get_alpaca_client()
+
+            # Initialize both ETF strategies with Alpaca client
             dual_momentum_universe = get_etf_universe_for_strategy("dual_momentum")
             sector_rotation_universe = get_etf_universe_for_strategy("sector_rotation")
 
-            dual_momentum = DualMomentumStrategy(etf_universe=dual_momentum_universe)
+            dual_momentum = DualMomentumStrategy(
+                etf_universe=dual_momentum_universe, alpaca_client=alpaca_client
+            )
             sector_rotation = SectorRotationStrategy(
-                etf_universe=sector_rotation_universe
+                etf_universe=sector_rotation_universe, alpaca_client=alpaca_client
             )
 
             # Fetch market data
@@ -500,7 +506,7 @@ class DashboardAnalysisService:
             return results
 
         except Exception as e:
-            logger.error(f"Combined ETF rotation analysis failed: {e}")
+            logger.error(f"Error in ETF rotation analysis: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
@@ -1272,3 +1278,13 @@ class DashboardAnalysisService:
             charts["combined_signal_distribution"] = fig
 
         return charts
+
+    def _get_alpaca_client(self):
+        """Get Alpaca client for position synchronization."""
+        try:
+            from execution.alpaca import get_alpaca_client
+
+            return get_alpaca_client()
+        except Exception as e:
+            logger.warning(f"Could not get Alpaca client: {e}")
+            return None

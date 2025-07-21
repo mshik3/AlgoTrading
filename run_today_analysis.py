@@ -44,10 +44,15 @@ class TodayInvestmentAnalyzer:
     """
 
     def __init__(self):
-        """Initialize the analyzer with environment and data collector."""
-        self.setup_environment()
-        self.setup_data_collector()
-        self.setup_strategies()
+        """Initialize the analyzer."""
+        self.config = {
+            "golden_cross_symbols": ["SPY", "QQQ", "VTI", "AAPL", "MSFT", "GOOGL"],
+            "mean_reversion_symbols": ["SPY", "QQQ", "VTI", "AAPL", "MSFT", "GOOGL"],
+            "enable_etf_rotation": True,
+        }
+        self.strategies = {}
+        self.data_collector = None
+        self.alpaca_client = None
 
     def setup_environment(self):
         """Load environment variables and validate configuration."""
@@ -97,148 +102,151 @@ class TodayInvestmentAnalyzer:
             raise
 
     def setup_strategies(self):
-        """Initialize both trading strategies."""
+        """Initialize trading strategies with position-aware capabilities."""
         logger.info("Setting up trading strategies...")
 
-        # Define the 50-asset universe
-        self.symbols = [
-            # Major US ETFs (8)
-            "SPY",
-            "QQQ",
-            "VTI",
-            "IWM",
-            "VEA",
-            "VWO",
-            "AGG",
-            "TLT",
-            # Sector ETFs (8)
-            "XLF",
-            "XLK",
-            "XLV",
-            "XLE",
-            "XLI",
-            "XLP",
-            "XLU",
-            "XLB",
-            # Major Tech Stocks (8)
-            "AAPL",
-            "MSFT",
-            "GOOGL",
-            "AMZN",
-            "META",
-            "TSLA",
-            "NVDA",
-            "NFLX",
-            # Financial & Industrial (6)
-            "JPM",
-            "BAC",
-            "WFC",
-            "GS",
-            "UNH",
-            "JNJ",
-            # International ETFs (6)
-            "EFA",
-            "EEM",
-            "FXI",
-            "EWJ",
-            "EWG",
-            "EWU",
-            # Commodity ETFs (4)
-            "GLD",
-            "SLV",
-            "USO",
-            "DBA",
-            # Crypto (10) - Only available in Alpaca API
-            "BTCUSD",
-            "ETHUSD",
-            "DOTUSD",
-            "LINKUSD",
-            "LTCUSD",
-            "BCHUSD",
-            "XRPUSD",
-            "SOLUSD",
-            "AVAXUSD",
-            "UNIUSD",
-        ]
+        try:
+            # Get Alpaca client for position synchronization
+            alpaca_client = self._get_alpaca_client()
 
-        # Initialize strategies
-        self.golden_cross = GoldenCrossStrategy(symbols=self.symbols)
-        self.mean_reversion = MeanReversionStrategy(symbols=self.symbols)
+            # Initialize strategies with Alpaca client
+            self.strategies = {
+                "golden_cross": GoldenCrossStrategy(
+                    symbols=self.config.get(
+                        "golden_cross_symbols", ["SPY", "QQQ", "VTI"]
+                    ),
+                    alpaca_client=alpaca_client,
+                ),
+                "mean_reversion": MeanReversionStrategy(
+                    symbols=self.config.get(
+                        "mean_reversion_symbols", ["SPY", "QQQ", "VTI"]
+                    ),
+                    alpaca_client=alpaca_client,
+                ),
+            }
 
-        logger.info(f"✓ Strategies initialized for {len(self.symbols)} symbols")
+            # Add ETF rotation strategies if configured
+            if self.config.get("enable_etf_rotation", True):
+                try:
+                    from strategies.etf.dual_momentum import DualMomentumStrategy
+                    from strategies.etf.sector_rotation import SectorRotationStrategy
+                    from utils.asset_categorization import get_etf_universe_for_strategy
+
+                    # Dual Momentum Strategy
+                    dual_momentum_universe = get_etf_universe_for_strategy(
+                        "dual_momentum"
+                    )
+                    self.strategies["dual_momentum"] = DualMomentumStrategy(
+                        etf_universe=dual_momentum_universe, alpaca_client=alpaca_client
+                    )
+
+                    # Sector Rotation Strategy
+                    sector_rotation_universe = get_etf_universe_for_strategy(
+                        "sector_rotation"
+                    )
+                    self.strategies["sector_rotation"] = SectorRotationStrategy(
+                        etf_universe=sector_rotation_universe,
+                        alpaca_client=alpaca_client,
+                    )
+
+                    logger.info("✓ ETF rotation strategies initialized")
+
+                except ImportError as e:
+                    logger.warning(f"ETF rotation strategies not available: {e}")
+
+            logger.info(f"✓ Initialized {len(self.strategies)} strategies")
+
+        except Exception as e:
+            logger.error(f"Error setting up strategies: {str(e)}")
+            raise
+
+    def _get_alpaca_client(self):
+        """Get Alpaca client for position synchronization."""
+        try:
+            from execution.alpaca import get_alpaca_client
+
+            return get_alpaca_client()
+        except Exception as e:
+            logger.warning(f"Could not get Alpaca client: {e}")
+            return None
 
     def fetch_market_data(self) -> Dict[str, pd.DataFrame]:
         """
-        Fetch real market data for all symbols from Alpaca.
+        Fetch real market data for all strategy symbols.
 
         Returns:
             Dictionary mapping symbol -> OHLCV DataFrame
         """
-        logger.info(f"Fetching real market data for {len(self.symbols)} symbols...")
+        # Collect all symbols from all strategies
+        all_symbols = set()
+        for strategy in self.strategies.values():
+            if hasattr(strategy, "symbols"):
+                all_symbols.update(strategy.symbols)
+
+        symbols_list = list(all_symbols)
+        logger.info(f"Fetching real market data for {len(symbols_list)} symbols...")
 
         market_data = {}
         successful_fetches = 0
 
-        # Use only real market data from Alpaca
-        for symbol in self.symbols:
+        for symbol in symbols_list:
             try:
-                # Validate symbol availability first
-                if not self.data_collector.validate_symbol_availability(symbol):
-                    logger.warning(f"Skipping {symbol} - not available in Alpaca API")
-                    continue
-                
-                # Use Alpaca collector to get real market data
-                data = self.data_collector.fetch_daily_data(symbol, period="2y")
+                # Fetch 1 year of daily data
+                data = self.data_collector.fetch_daily_data(symbol, period="1y")
 
                 if data is not None and not data.empty and len(data) >= 250:
                     market_data[symbol] = data
                     successful_fetches += 1
-                    logger.info(f"✓ {symbol}: {len(data)} days of real data")
+                    logger.debug(f"✓ {symbol}: {len(data)} days of data")
                 else:
-                    logger.warning(f"✗ Insufficient real data for {symbol}")
+                    logger.warning(f"✗ {symbol}: Insufficient data")
 
             except Exception as e:
-                logger.error(f"Error fetching real data for {symbol}: {e}")
-                continue
+                logger.error(f"Error fetching data for {symbol}: {str(e)}")
 
         logger.info(
-            f"Successfully fetched real data for {successful_fetches}/{len(self.symbols)} symbols"
+            f"Successfully fetched real data for {successful_fetches}/{len(symbols_list)} symbols"
         )
+
         return market_data
 
     def generate_strategy_signals(
         self, market_data: Dict[str, pd.DataFrame]
     ) -> Dict[str, List[StrategySignal]]:
         """
-        Generate signals from both strategies using real market data.
+        Generate signals from all strategies.
 
         Args:
-            market_data: Dictionary of symbol -> OHLCV DataFrame
+            market_data: Dictionary mapping symbol -> OHLCV DataFrame
 
         Returns:
-            Dictionary with strategy names as keys and signal lists as values
+            Dictionary mapping strategy name -> list of signals
         """
-        logger.info("Generating trading signals from real market data...")
+        logger.info("Generating signals from all strategies...")
 
         signals = {}
 
-        # Golden Cross signals
-        try:
-            golden_signals = self.golden_cross.generate_signals(market_data)
-            signals["golden_cross"] = golden_signals
-            logger.info(f"✓ Golden Cross: {len(golden_signals)} signals")
-        except Exception as e:
-            logger.error(f"Golden Cross signal generation failed: {e}")
-            signals["golden_cross"] = []
+        for strategy_name, strategy in self.strategies.items():
+            try:
+                logger.info(f"Generating signals for {strategy_name}...")
 
-        # Mean Reversion signals
-        try:
-            mean_rev_signals = self.mean_reversion.generate_signals(market_data)
-            signals["mean_reversion"] = mean_rev_signals
-            logger.info(f"✓ Mean Reversion: {len(mean_rev_signals)} signals")
-        except Exception as e:
-            logger.error(f"Mean Reversion signal generation failed: {e}")
-            signals["mean_reversion"] = []
+                # Sync positions with broker before generating signals
+                if hasattr(strategy, "sync_with_broker_positions"):
+                    strategy.sync_with_broker_positions(force_sync=True)
+
+                strategy_signals = strategy.generate_signals(market_data)
+                signals[strategy_name] = strategy_signals
+
+                logger.info(
+                    f"✓ {strategy_name}: Generated {len(strategy_signals)} signals"
+                )
+
+            except Exception as e:
+                logger.error(f"Error generating signals for {strategy_name}: {str(e)}")
+                signals[strategy_name] = []
+
+        total_signals = sum(len(sig_list) for sig_list in signals.values())
+        logger.info(f"✓ Total signals generated: {total_signals}")
 
         return signals
 
@@ -553,7 +561,7 @@ class TodayInvestmentAnalyzer:
 
     def run_analysis(self) -> Dict:
         """
-        Run the complete investment analysis using only real market data.
+        Run complete investment analysis with real market data.
 
         Returns:
             Complete analysis results
@@ -561,26 +569,31 @@ class TodayInvestmentAnalyzer:
         logger.info("🚀 Starting Today's Investment Analysis with Real Market Data...")
 
         try:
-            # Step 1: Fetch real market data
+            # Setup all components
+            self.setup_environment()
+            self.setup_data_collector()
+            self.setup_strategies()
+
+            # Fetch market data
             market_data = self.fetch_market_data()
 
             if not market_data:
                 raise Exception("No real market data available for analysis")
 
-            # Step 2: Generate strategy signals from real data
+            # Generate strategy signals
             signals = self.generate_strategy_signals(market_data)
 
-            # Step 3: Analyze signals from real data
+            # Analyze signals
             analysis = self.analyze_signals(signals, market_data)
 
-            # Step 4: Print report
+            # Print analysis report
             self.print_analysis_report(analysis)
 
-            logger.info("✅ Analysis completed successfully with real market data")
+            logger.info("✅ Analysis completed successfully!")
             return analysis
 
         except Exception as e:
-            logger.error(f"Analysis failed: {e}")
+            logger.error(f"Analysis failed: {str(e)}")
             raise
 
 

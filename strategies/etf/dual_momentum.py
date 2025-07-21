@@ -16,7 +16,7 @@ import logging
 from datetime import datetime
 
 from .rotation_base import BaseETFRotationStrategy
-from ..base import StrategySignal, SignalType
+from ..base import StrategySignal, SignalType, PositionAction
 
 logger = logging.getLogger(__name__)
 
@@ -201,54 +201,97 @@ class DualMomentumStrategy(BaseETFRotationStrategy):
         self, symbol: str, data: pd.DataFrame
     ) -> Optional[StrategySignal]:
         """
-        Determine if we should enter a position in the given symbol.
+        Determine if we should enter a position in the given asset.
+        Now position-aware: considers existing positions for increase/decrease decisions.
 
         Args:
-            symbol: ETF symbol
+            symbol: Asset symbol
             data: OHLCV data
 
         Returns:
             StrategySignal if should enter, None otherwise
         """
-        # Skip if we already have a position
-        if symbol in self.positions:
+        # Sync with broker positions first
+        if self.alpaca_client:
+            self.sync_with_broker_positions()
+
+        # Check if this is the best asset by relative momentum
+        if symbol != self.current_asset:
             return None
 
-        # Check absolute momentum
-        absolute_momentum = self.calculate_absolute_momentum(data)
+        # Calculate confidence based on momentum scores
+        absolute_momentum = self.absolute_momentum_scores.get(symbol, 0.0)
+        relative_momentum = self.relative_momentum_scores.get(symbol, 0.0)
 
-        if (
-            np.isnan(absolute_momentum)
-            or absolute_momentum < self.config["min_absolute_momentum"]
-        ):
+        # Combined confidence calculation
+        confidence = min(
+            0.7 + (absolute_momentum * 0.2) + (relative_momentum * 0.1), 1.0
+        )
+
+        if confidence < self.config["confidence_threshold"]:
             return None
-
-        # Calculate confidence based on momentum strength
-        confidence = min(0.7 + (absolute_momentum * 0.3), 1.0)
 
         current_price = data["Close"].iloc[-1]
+
+        # Get current position information
+        current_position = self.positions.get(symbol, {})
+        current_quantity = current_position.get("quantity", 0)
+
+        # For dual momentum, we typically want 100% allocation to the best asset
+        portfolio_value = 100000  # Default for signal generation
+        target_allocation = 1.0  # 100% allocation to best asset
+
+        # Calculate position delta and action
+        quantity_delta, position_action = self.calculate_position_delta(
+            symbol, target_allocation, portfolio_value, current_price
+        )
+
+        # If no action needed, return None
+        if position_action == PositionAction.MAINTAIN or quantity_delta == 0:
+            return None
 
         # Calculate stop loss and take profit
         stop_loss = current_price * (1 - self.config["stop_loss_pct"])
         take_profit = current_price * (1 + self.config["take_profit_pct"])
 
+        # Determine signal type based on position action
+        if position_action in [PositionAction.OPEN_NEW, PositionAction.INCREASE]:
+            signal_type = SignalType.BUY
+        elif position_action == PositionAction.DECREASE:
+            signal_type = SignalType.SELL
+        elif position_action == PositionAction.CLOSE:
+            signal_type = SignalType.CLOSE_LONG
+        else:
+            return None
+
         signal = StrategySignal(
             symbol=symbol,
-            signal_type=SignalType.BUY,
+            signal_type=signal_type,
             confidence=confidence,
             price=current_price,
+            quantity=quantity_delta,
             stop_loss=stop_loss,
             take_profit=take_profit,
             strategy_name=self.name,
+            position_action=position_action,
             metadata={
                 "absolute_momentum": absolute_momentum,
-                "entry_reason": "dual_momentum_qualified",
-                "momentum_lookback": self.config["absolute_momentum_lookback"],
+                "relative_momentum": relative_momentum,
+                "entry_reason": "dual_momentum_best_asset",
+                "absolute_momentum_lookback": self.config["absolute_momentum_lookback"],
+                "relative_momentum_lookback": self.config["relative_momentum_lookback"],
+                "current_quantity": current_quantity,
+                "target_quantity": int(
+                    portfolio_value * target_allocation / current_price
+                ),
+                "position_action": position_action.value,
             },
         )
 
         logger.info(
-            f"Dual Momentum BUY signal for {symbol}: absolute_momentum={absolute_momentum:.3f}, "
+            f"Dual Momentum {position_action.value} signal for {symbol}: "
+            f"current_qty={current_quantity}, target_delta={quantity_delta}, "
+            f"abs_momentum={absolute_momentum:.3f}, rel_momentum={relative_momentum:.3f}, "
             f"confidence={confidence:.3f}"
         )
 
