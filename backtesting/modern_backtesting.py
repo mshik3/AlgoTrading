@@ -19,7 +19,9 @@ import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 import logging
 from datetime import datetime, timedelta
-import yfinance as yf
+import alpaca_trade_api as tradeapi
+import os
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -86,15 +88,39 @@ class ModernBacktestEngine:
             end_date: End date for data fetch
         """
         if data is None:
-            # Fetch data using yfinance
-            if start_date and end_date:
-                data = yf.download(
-                    symbol, start=start_date, end=end_date, progress=False
+            # Fetch data using Alpaca API
+            api_key = os.getenv("ALPACA_API_KEY")
+            secret_key = os.getenv("ALPACA_SECRET_KEY")
+
+            if not api_key or not secret_key:
+                raise ValueError(
+                    "Alpaca API credentials not found. Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables."
                 )
-            else:
-                data = yf.download(
-                    symbol, period="2y", progress=False
-                )  # Default 2 years
+
+            api = tradeapi.REST(
+                api_key,
+                secret_key,
+                "https://paper-api.alpaca.markets",
+                api_version="v2",
+            )
+
+            # Set default dates
+            if end_date is None:
+                end_date = datetime.now().strftime("%Y-%m-%d")
+            if start_date is None:
+                start_date = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+
+            try:
+                bars = api.get_bars(
+                    symbol, "1Day", start=start_date, end=end_date, adjustment="all"
+                )
+                if bars:
+                    data = bars.df
+                else:
+                    raise ValueError(f"No data returned for {symbol}")
+            except Exception as e:
+                logger.error(f"Error fetching data from Alpaca for {symbol}: {e}")
+                raise
 
         # Ensure proper column names for Backtrader
         if data.columns.nlevels > 1:

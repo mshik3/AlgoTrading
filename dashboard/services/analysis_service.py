@@ -21,10 +21,13 @@ sys.path.append(
 # Import project modules
 from utils.config import load_environment, get_env_var
 from data.alpaca_collector import AlpacaDataCollector, AlpacaConfig
-from strategies.equity.golden_cross import GoldenCrossStrategy
-from strategies.equity.mean_reversion import MeanReversionStrategy
-from strategies.etf.dual_momentum import DualMomentumStrategy
-from strategies.etf.sector_rotation import SectorRotationStrategy
+from strategies.modern_strategies import (
+    ModernGoldenCrossStrategy,
+    ModernMeanReversionStrategy,
+    ModernDualMomentumStrategy,
+    ModernSectorRotationStrategy,
+    create_strategy,
+)
 from strategies.base import StrategySignal, SignalType
 from utils.asset_categorization import get_etf_universe_for_strategy
 
@@ -152,11 +155,29 @@ class DashboardAnalysisService:
             "UNIUSD",
         ]
 
-        # Initialize strategies
-        self.golden_cross = GoldenCrossStrategy(symbols=self.symbols)
-        self.mean_reversion = MeanReversionStrategy(symbols=self.symbols)
-
-        logger.info(f"✓ Strategies initialized for {len(self.symbols)} symbols")
+        # Initialize strategies with modern PFund framework
+        try:
+            # Use modern strategy factory for consistent initialization
+            self.golden_cross = create_strategy("golden_cross", symbols=self.symbols)
+            self.mean_reversion = create_strategy(
+                "mean_reversion", symbols=self.symbols
+            )
+            logger.info(
+                f"✓ Modern PFund strategies initialized for {len(self.symbols)} symbols"
+            )
+        except Exception as e:
+            logger.error(f"Modern strategy initialization failed: {e}")
+            # Fallback to direct instantiation if factory fails
+            try:
+                self.golden_cross = ModernGoldenCrossStrategy(symbols=self.symbols)
+                self.mean_reversion = ModernMeanReversionStrategy(symbols=self.symbols)
+                logger.info(
+                    f"✓ Modern strategies initialized with direct instantiation for {len(self.symbols)} symbols"
+                )
+            except Exception as e2:
+                logger.error(f"Direct strategy initialization also failed: {e2}")
+                self.golden_cross = None
+                self.mean_reversion = None
 
     def fetch_market_data(self) -> Dict[str, pd.DataFrame]:
         """
@@ -367,9 +388,13 @@ class DashboardAnalysisService:
         logger.info("Running Dual Momentum ETF rotation analysis...")
 
         try:
-            # Initialize dual momentum strategy
+            # Initialize dual momentum strategy with modern PFund framework
             etf_universe = get_etf_universe_for_strategy("dual_momentum")
-            dual_momentum = DualMomentumStrategy(etf_universe=etf_universe)
+            try:
+                dual_momentum = create_strategy("dual_momentum", assets=etf_universe)
+            except Exception as e:
+                logger.error(f"Modern dual momentum strategy creation failed: {e}")
+                dual_momentum = ModernDualMomentumStrategy(assets=etf_universe)
 
             # Fetch market data for ETF universe
             market_data = self.fetch_market_data()
@@ -414,9 +439,13 @@ class DashboardAnalysisService:
         logger.info("Running Sector Rotation ETF analysis...")
 
         try:
-            # Initialize sector rotation strategy
+            # Initialize sector rotation strategy with modern PFund framework
             etf_universe = get_etf_universe_for_strategy("sector_rotation")
-            sector_rotation = SectorRotationStrategy(etf_universe=etf_universe)
+            try:
+                sector_rotation = create_strategy("sector_rotation", sectors=etf_universe)
+            except Exception as e:
+                logger.error(f"Modern sector rotation strategy creation failed: {e}")
+                sector_rotation = ModernSectorRotationStrategy(sectors=etf_universe)
 
             # Fetch market data for ETF universe
             market_data = self.fetch_market_data()
@@ -464,16 +493,17 @@ class DashboardAnalysisService:
             # Get Alpaca client for position synchronization
             alpaca_client = self._get_alpaca_client()
 
-            # Initialize both ETF strategies with Alpaca client
+            # Initialize both ETF strategies with modern PFund framework
             dual_momentum_universe = get_etf_universe_for_strategy("dual_momentum")
             sector_rotation_universe = get_etf_universe_for_strategy("sector_rotation")
 
-            dual_momentum = DualMomentumStrategy(
-                etf_universe=dual_momentum_universe, alpaca_client=alpaca_client
-            )
-            sector_rotation = SectorRotationStrategy(
-                etf_universe=sector_rotation_universe, alpaca_client=alpaca_client
-            )
+            try:
+                dual_momentum = create_strategy("dual_momentum", assets=dual_momentum_universe)
+                sector_rotation = create_strategy("sector_rotation", sectors=sector_rotation_universe)
+            except Exception as e:
+                logger.error(f"Modern ETF strategy creation failed: {e}")
+                dual_momentum = ModernDualMomentumStrategy(assets=dual_momentum_universe)
+                sector_rotation = ModernSectorRotationStrategy(sectors=sector_rotation_universe)
 
             # Fetch market data
             market_data = self.fetch_market_data()
@@ -525,12 +555,17 @@ class DashboardAnalysisService:
         logger.info("Running all strategies analysis...")
 
         try:
-            # Initialize all strategies
+            # Initialize all strategies with modern PFund framework
             etf_universe_dual = get_etf_universe_for_strategy("dual_momentum")
             etf_universe_sector = get_etf_universe_for_strategy("sector_rotation")
 
-            dual_momentum = DualMomentumStrategy(etf_universe=etf_universe_dual)
-            sector_rotation = SectorRotationStrategy(etf_universe=etf_universe_sector)
+            try:
+                dual_momentum = create_strategy("dual_momentum", assets=etf_universe_dual)
+                sector_rotation = create_strategy("sector_rotation", sectors=etf_universe_sector)
+            except Exception as e:
+                logger.error(f"Modern strategy creation failed: {e}")
+                dual_momentum = ModernDualMomentumStrategy(assets=etf_universe_dual)
+                sector_rotation = ModernSectorRotationStrategy(sectors=etf_universe_sector)
 
             # Fetch market data
             market_data = self.fetch_market_data()

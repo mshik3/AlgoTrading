@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
-import yfinance as yf
+from portfolio.alpaca_data_adapter import create_alpaca_optimizer
 
 # Import the modern implementations (excluding PFund for now due to dependencies)
 from portfolio.modern_portfolio_optimization import create_portfolio_optimizer
@@ -70,22 +70,20 @@ def run_modern_portfolio_optimization():
     print(f"\n📊 Fetching data for: {', '.join(symbols)}")
 
     try:
-        # Fetch 2 years of data
-        price_data = yf.download(symbols, period="2y", progress=False)[
-            "Adj Close"
-        ].dropna()
-        print(f"✅ Retrieved {len(price_data)} days of price data")
+        # Create Alpaca portfolio optimizer
+        alpaca_optimizer = create_alpaca_optimizer()
+        print(f"✅ Connected to Alpaca API")
 
-        # Create modern portfolio optimizer
-        optimizer = create_portfolio_optimizer(price_data, method="pypfopt")
-
-        # Optimize for maximum Sharpe ratio
-        print("\n🔍 Optimizing for Maximum Sharpe Ratio...")
-        result = optimizer.optimize_max_sharpe(
-            risk_model="shrunk",
+        # Run optimization using Alpaca data
+        result = alpaca_optimizer.optimize_portfolio(
+            symbols=symbols,
+            method="max_sharpe",
             portfolio_value=100000,
             weight_bounds=(0.05, 0.4),  # Min 5%, max 40% per asset
         )
+
+        # Optimization already completed above
+        print("\n🔍 Optimizing for Maximum Sharpe Ratio...")
 
         print(f"\n📊 OPTIMIZATION RESULTS:")
         print(f"Expected Annual Return: {result['expected_annual_return']:.1%}")
@@ -109,7 +107,7 @@ def run_modern_portfolio_optimization():
             "TSLA": -0.05,  # -5% expected return (bearish)
         }
 
-        bl_result = optimizer.black_litterman_optimization(views)
+        bl_result = alpaca_optimizer.black_litterman_optimization(symbols, views)
         print(f"With investor views: {views}")
         print(f"BL Sharpe Ratio: {bl_result['sharpe_ratio']:.2f}")
         print("BL Portfolio Weights:")

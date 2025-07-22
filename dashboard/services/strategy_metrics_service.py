@@ -18,10 +18,13 @@ sys.path.append(
 # Import project modules
 from utils.config import load_environment, get_env_var
 from dashboard.services.alpaca_account import AlpacaAccountService
-from strategies.equity.golden_cross import GoldenCrossStrategy
-from strategies.equity.mean_reversion import MeanReversionStrategy
-from strategies.etf.dual_momentum import DualMomentumStrategy
-from strategies.etf.sector_rotation import SectorRotationStrategy
+from strategies.modern_strategies import (
+    ModernGoldenCrossStrategy,
+    ModernMeanReversionStrategy,
+    ModernDualMomentumStrategy,
+    ModernSectorRotationStrategy,
+    create_strategy,
+)
 from utils.asset_categorization import get_etf_universe_for_strategy
 
 # Set up logging
@@ -55,14 +58,14 @@ class StrategyMetricsService:
             self.strategies = {
             "golden_cross": {
                 "name": "Golden Cross Strategy",
-                "class": GoldenCrossStrategy,
+                "class": ModernGoldenCrossStrategy,
                 "symbols": ["SPY", "QQQ", "VTI"],  # Default symbols
                 "status": "ACTIVE",
-                "description": "Moving average crossover strategy",
+                "description": "Modern PFund-based moving average crossover strategy",
             },
             "mean_reversion": {
                 "name": "Mean Reversion Strategy",
-                "class": MeanReversionStrategy,
+                "class": ModernMeanReversionStrategy,
                 "symbols": [
                     "SPY",
                     "QQQ",
@@ -72,21 +75,21 @@ class StrategyMetricsService:
                     "GOOGL",
                 ],  # More symbols for mean reversion
                 "status": "ACTIVE",
-                "description": "Statistical mean reversion with O-U process",
+                "description": "Modern PFund-based statistical mean reversion with O-U process",
             },
             "dual_momentum": {
                 "name": "Dual Momentum ETF Rotation",
-                "class": DualMomentumStrategy,
+                "class": ModernDualMomentumStrategy,
                 "etf_universe": get_etf_universe_for_strategy("dual_momentum"),
                 "status": "ACTIVE",
-                "description": "Gary Antonacci's dual momentum approach with absolute/relative momentum",
+                "description": "Modern PFund-based Gary Antonacci's dual momentum approach",
             },
             "sector_rotation": {
                 "name": "Sector ETF Rotation",
-                "class": SectorRotationStrategy,
+                "class": ModernSectorRotationStrategy,
                 "etf_universe": get_etf_universe_for_strategy("sector_rotation"),
                 "status": "ACTIVE",
-                "description": "Sector rotation based on relative strength and momentum analysis",
+                "description": "Modern PFund-based sector rotation with relative strength analysis",
             },
         }
 
@@ -96,22 +99,33 @@ class StrategyMetricsService:
             StrategyMetricsService._initialized = True
 
     def _initialize_strategies(self):
-        """Initialize strategy instances for metrics collection."""
+        """Initialize strategy instances for metrics collection using modern PFund framework."""
         try:
             for strategy_id, config in self.strategies.items():
-                strategy_class = config["class"]
-
-                # Handle ETF strategies differently
-                if strategy_id in ["dual_momentum", "sector_rotation"]:
-                    etf_universe = config["etf_universe"]
-                    strategy_instance = strategy_class(etf_universe=etf_universe)
-                else:
-                    # Handle equity strategies
-                    symbols = config["symbols"]
-                    strategy_instance = strategy_class(symbols=symbols)
+                try:
+                    # Use modern strategy factory for consistent initialization
+                    if strategy_id in ["dual_momentum", "sector_rotation"]:
+                        etf_universe = config["etf_universe"]
+                        strategy_instance = create_strategy(strategy_id, assets=etf_universe)
+                    else:
+                        symbols = config["symbols"]
+                        strategy_instance = create_strategy(strategy_id, symbols=symbols)
+                    
+                    logger.info(f"✓ Modern PFund {config['name']} initialized for metrics tracking")
+                except Exception as e:
+                    logger.error(f"Modern strategy factory failed for {strategy_id}: {e}")
+                    # Fallback to direct instantiation
+                    strategy_class = config["class"]
+                    if strategy_id in ["dual_momentum", "sector_rotation"]:
+                        etf_universe = config["etf_universe"]
+                        strategy_instance = strategy_class(assets=etf_universe)
+                    else:
+                        symbols = config["symbols"]
+                        strategy_instance = strategy_class(symbols=symbols)
+                    
+                    logger.info(f"✓ Fallback {config['name']} initialized for metrics tracking")
 
                 self.strategy_instances[strategy_id] = strategy_instance
-                logger.info(f"Initialized {config['name']} for metrics tracking")
 
         except Exception as e:
             logger.error(f"Error initializing strategies: {e}")

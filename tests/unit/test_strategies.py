@@ -1,6 +1,6 @@
 """
 Unit tests for strategy implementations.
-Focused tests for core strategy functionality.
+Focused tests for core strategy functionality using modern strategies.
 """
 
 import pytest
@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
 from strategies.base import BaseStrategy, StrategySignal, SignalType
-from strategies.equity.golden_cross import GoldenCrossStrategy
+from strategies.modern_strategies import ModernGoldenCrossStrategy
 
 
 class TestBaseStrategy:
@@ -48,8 +48,8 @@ class TestBaseStrategy:
         assert signal.metadata == {}
 
 
-class TestGoldenCrossStrategy:
-    """Test GoldenCrossStrategy functionality."""
+class TestModernGoldenCrossStrategy:
+    """Test Modern Golden Cross Strategy functionality."""
 
     @pytest.fixture
     def sample_data(self):
@@ -58,24 +58,24 @@ class TestGoldenCrossStrategy:
             "2023-01-01", periods=250, freq="D"
         )  # 250 days for MA calculations
         data = {
-            "Open": [100.0] * 250,
-            "High": [102.0] * 250,
-            "Low": [99.0] * 250,
-            "Close": [101.0] * 250,
-            "Volume": [1000000] * 250,
-            "Adj Close": [101.0] * 250,
+            "open": [100.0] * 250,
+            "high": [102.0] * 250,
+            "low": [99.0] * 250,
+            "close": [101.0] * 250,
+            "volume": [1000000] * 250,
         }
         return pd.DataFrame(data, index=dates)
 
     def test_golden_cross_initialization(self):
-        """Test GoldenCrossStrategy initialization."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL", "MSFT"])
-        assert strategy.name == "Golden Cross"
+        """Test Modern Golden Cross Strategy initialization."""
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL", "MSFT"])
+        assert strategy.name == "ModernGoldenCross"
         assert strategy.symbols == ["AAPL", "MSFT"]
+        assert strategy.config["strategy_type"] == "modern_golden_cross"
 
     def test_generate_signals_basic(self, sample_data):
         """Test basic signal generation."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
         market_data = {"AAPL": sample_data}
 
         signals = strategy.generate_signals(market_data)
@@ -85,7 +85,7 @@ class TestGoldenCrossStrategy:
 
     def test_generate_signals_empty_data(self):
         """Test signal generation with empty data."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
         empty_data = pd.DataFrame()
         market_data = {"AAPL": empty_data}
 
@@ -94,7 +94,7 @@ class TestGoldenCrossStrategy:
 
     def test_generate_signals_missing_symbol(self, sample_data):
         """Test signal generation with missing symbol."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL", "MSFT"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL", "MSFT"])
         market_data = {"AAPL": sample_data}  # Missing MSFT
 
         signals = strategy.generate_signals(market_data)
@@ -102,58 +102,88 @@ class TestGoldenCrossStrategy:
 
     def test_validate_signal(self):
         """Test signal validation."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
 
+        # Valid signal
         valid_signal = StrategySignal(
             symbol="AAPL",
             signal_type=SignalType.BUY,
             confidence=0.8,
             price=150.0,
-            quantity=100,
         )
-
         assert strategy.validate_signal(valid_signal) is True
+
+        # Invalid signal (low confidence)
+        invalid_signal = StrategySignal(
+            symbol="AAPL",
+            signal_type=SignalType.BUY,
+            confidence=0.1,  # Below min_confidence threshold
+            price=150.0,
+        )
+        assert strategy.validate_signal(invalid_signal) is False
+
+        # Test with maximum positions reached
+        strategy.positions = {
+            "MSFT": {"quantity": 100},
+            "GOOGL": {"quantity": 100},
+            "TSLA": {"quantity": 100},
+            "NVDA": {"quantity": 100},
+            "META": {"quantity": 100},
+        }  # Max 5 positions
+
+        max_positions_signal = StrategySignal(
+            symbol="NFLX",  # New symbol not in positions
+            signal_type=SignalType.BUY,
+            confidence=0.8,
+            price=150.0,
+        )
+        assert strategy.validate_signal(max_positions_signal) is False
 
     def test_calculate_position_size(self):
         """Test position size calculation."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
         signal = StrategySignal(
-            symbol="AAPL", signal_type=SignalType.BUY, confidence=0.8, price=150.0
+            symbol="AAPL",
+            signal_type=SignalType.BUY,
+            confidence=0.8,
+            price=150.0,
         )
 
         position_size = strategy.calculate_position_size(signal, 10000, 150.0)
+        assert isinstance(position_size, int)
         assert position_size > 0
 
     def test_strategy_config(self):
         """Test strategy configuration."""
-        config = {"max_position_size": 0.3, "stop_loss_pct": 0.15}
-        strategy = GoldenCrossStrategy(symbols=["AAPL"], **config)
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
 
-        assert strategy.config["max_position_size"] == 0.3
-        assert strategy.config["stop_loss_pct"] == 0.15
+        assert "fast_ma_period" in strategy.config
+        assert "slow_ma_period" in strategy.config
+        assert strategy.config["strategy_type"] == "modern_golden_cross"
 
     def test_strategy_performance_tracking(self, sample_data):
         """Test strategy performance tracking."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
         market_data = {"AAPL": sample_data}
 
-        # Generate signals
+        # Generate some signals
         signals = strategy.generate_signals(market_data)
 
         # Add signals to history
         for signal in signals:
             strategy.add_signal_to_history(signal)
 
-        # Check history
-        history = strategy.get_signals_history()
-        assert len(history) == len(signals)
+        # Check performance summary
+        summary = strategy.get_performance_summary()
+        assert isinstance(summary, dict)
+        assert "total_signals" in summary
 
     def test_strategy_reset(self, sample_data):
         """Test strategy reset functionality."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
         market_data = {"AAPL": sample_data}
 
-        # Generate some signals
+        # Generate signals and add to history
         signals = strategy.generate_signals(market_data)
         for signal in signals:
             strategy.add_signal_to_history(signal)
@@ -161,17 +191,20 @@ class TestGoldenCrossStrategy:
         # Reset strategy
         strategy.reset_positions()
 
-        # Check that positions are cleared
-        assert strategy.positions == {}
+        # Check that positions are reset
+        assert len(strategy.positions) == 0
 
     def test_strategy_activation(self):
         """Test strategy activation/deactivation."""
-        strategy = GoldenCrossStrategy(symbols=["AAPL"])
+        strategy = ModernGoldenCrossStrategy(symbols=["AAPL"])
 
-        # Deactivate strategy
+        # Initially active
+        assert strategy.is_active is True
+
+        # Deactivate
         strategy.set_active(False)
         assert strategy.is_active is False
 
-        # Reactivate strategy
+        # Reactivate
         strategy.set_active(True)
         assert strategy.is_active is True
