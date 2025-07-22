@@ -4,7 +4,7 @@ Handles fetching data from Alpaca Markets API.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Union
 import pandas as pd
 
@@ -27,6 +27,18 @@ from .storage import MarketData
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# --- PATCH: Add safe_date helper ---
+def _safe_date(dt):
+    from datetime import datetime, date
+
+    if isinstance(dt, datetime):
+        return dt.date()
+    elif isinstance(dt, date):
+        return dt
+    else:
+        raise TypeError(f"Expected datetime or date, got {type(dt)}")
 
 
 class AlpacaDataCollector:
@@ -74,17 +86,19 @@ class AlpacaDataCollector:
         """Load available crypto symbols from Alpaca Assets API."""
         try:
             from .alpaca_assets import get_available_crypto_symbols
-            
+
             available_symbols = get_available_crypto_symbols()
-            
+
             # Create mapping from our format to Alpaca format
             for alpaca_symbol in available_symbols:
                 # Convert "BTC/USD" to "BTCUSD"
                 our_symbol = alpaca_symbol.replace("/", "")
                 self.crypto_symbols[our_symbol] = alpaca_symbol
-            
-            logger.info(f"Loaded {len(self.crypto_symbols)} crypto symbols from Alpaca Assets API")
-            
+
+            logger.info(
+                f"Loaded {len(self.crypto_symbols)} crypto symbols from Alpaca Assets API"
+            )
+
         except Exception as e:
             logger.warning(f"Failed to load crypto symbols from Assets API: {e}")
             # Fallback to a minimal set of known working symbols
@@ -162,7 +176,7 @@ class AlpacaDataCollector:
                 end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
 
             logger.info(
-                f"Fetching {symbol} data from {start_date.date()} to {end_date.date()}"
+                f"Fetching {symbol} data from {_safe_date(start_date)} to {_safe_date(end_date)}"
             )
 
             if not ALPACA_AVAILABLE:
@@ -217,6 +231,278 @@ class AlpacaDataCollector:
         except Exception as e:
             logger.error(f"Error fetching data for {symbol}: {str(e)}")
             return None
+
+    def incremental_fetch_daily_data(
+        self,
+        session,
+        symbol: str,
+        start_date: Optional[Union[datetime, str]] = None,
+        end_date: Optional[Union[datetime, str]] = None,
+        period: Optional[str] = None,
+        force_update: bool = False,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch daily data incrementally, only downloading missing data.
+
+        Args:
+            session: SQLAlchemy session for database operations
+            symbol: Stock symbol
+            start_date: Start date for data collection
+            end_date: End date for data collection
+            period: Period string (e.g., '5y' for 5 years)
+            force_update: Whether to force update existing data
+
+        Returns:
+            DataFrame with complete OHLCV data or None if failed
+        """
+        from datetime import datetime, timedelta
+        from .storage import (
+            get_symbol_data_range,
+            get_missing_date_ranges,
+            get_cached_market_data,
+            set_cached_market_data,
+            invalidate_symbol_cache,
+        )
+
+        try:
+            # Convert period to dates if provided
+            if period:
+                end_date = datetime.now()
+                if period == "5y":
+                    start_date = end_date - timedelta(days=5 * 365)
+                elif period == "2y":
+                    start_date = end_date - timedelta(days=2 * 365)
+                elif period == "1y":
+                    start_date = end_date - timedelta(days=365)
+                elif period == "6mo":
+                    start_date = end_date - timedelta(days=180)
+                elif period == "3mo":
+                    start_date = end_date - timedelta(days=90)
+                elif period == "1mo":
+                    start_date = end_date - timedelta(days=30)
+                else:
+                    start_date = end_date - timedelta(days=365)
+
+            # Ensure we have start and end dates
+            if not end_date:
+                end_date = datetime.now()
+            if not start_date:
+                start_date = end_date - timedelta(days=365)
+
+            # Convert string dates to datetime
+            if isinstance(start_date, str):
+                start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+
+            # Check cache first
+            cached_data = get_cached_market_data(
+                symbol, _safe_date(start_date), _safe_date(end_date)
+            )
+            if cached_data and not force_update:
+                logger.info(f"Using cached data for {symbol}")
+                return self._convert_market_data_to_dataframe(cached_data)
+
+            # Check if we need to fetch any data
+            if not force_update:
+                data_range = get_symbol_data_range(session, symbol)
+
+                if data_range["has_data"]:
+                    # Check if we have all the data we need
+                    if data_range["earliest_date"] <= _safe_date(
+                        start_date
+                    ) and data_range["latest_date"] >= _safe_date(end_date):
+                        logger.info(
+                            f"All data for {symbol} already available in database"
+                        )
+                        # Get data from database
+                        from .storage import get_market_data
+
+                        db_data = get_market_data(
+                            session,
+                            symbol,
+                            _safe_date(start_date),
+                            _safe_date(end_date),
+                        )
+                        if db_data:
+                            df = self._convert_market_data_to_dataframe(db_data)
+                            # Cache the result
+                            set_cached_market_data(
+                                symbol,
+                                _safe_date(start_date),
+                                _safe_date(end_date),
+                                db_data,
+                            )
+                            return df
+
+            # Calculate missing date ranges
+            missing_ranges = get_missing_date_ranges(
+                session, symbol, _safe_date(start_date), _safe_date(end_date)
+            )
+
+            if not missing_ranges and not force_update:
+                logger.info(f"No missing data for {symbol}")
+                # Get existing data from database
+                from .storage import get_market_data
+
+                db_data = get_market_data(
+                    session, symbol, _safe_date(start_date), _safe_date(end_date)
+                )
+                if db_data:
+                    df = self._convert_market_data_to_dataframe(db_data)
+                    set_cached_market_data(
+                        symbol, _safe_date(start_date), _safe_date(end_date), db_data
+                    )
+                    return df
+
+            # Fetch missing data
+            all_fetched_data = []
+            for range_start, range_end in missing_ranges:
+                logger.info(
+                    f"Fetching missing data for {symbol}: {_safe_date(range_start)} to {_safe_date(range_end)}"
+                )
+
+                try:
+                    # Convert date objects to datetime objects for fetch_daily_data
+                    range_start_dt = datetime.combine(range_start, datetime.min.time())
+                    range_end_dt = datetime.combine(range_end, datetime.min.time())
+
+                    # Fetch data for this range
+                    range_data = self.fetch_daily_data(
+                        symbol, start_date=range_start_dt, end_date=range_end_dt
+                    )
+
+                    if range_data is not None and not range_data.empty:
+                        all_fetched_data.append(range_data)
+                        logger.info(
+                            f"✓ Fetched {len(range_data)} records for {symbol} ({range_start} to {range_end})"
+                        )
+                    else:
+                        logger.warning(
+                            f"No data fetched for {symbol} ({range_start} to {range_end})"
+                        )
+
+                except Exception as e:
+                    logger.error(
+                        f"Error fetching data for {symbol} ({range_start} to {range_end}): {str(e)}"
+                    )
+
+            # Combine all fetched data
+            if all_fetched_data:
+                combined_fetched = pd.concat(all_fetched_data, ignore_index=True)
+                combined_fetched = combined_fetched.drop_duplicates(
+                    subset=["Date"]
+                ).sort_values("Date")
+
+                # Save to database
+                from .storage import save_market_data
+
+                # Convert to MarketData objects and save
+                market_data_objects = self.transform_to_market_data(
+                    symbol, combined_fetched
+                )
+                if market_data_objects:
+                    new_records, updated_records = save_market_data(
+                        session, market_data_objects
+                    )
+                    logger.info(
+                        f"Saved {new_records} new, {updated_records} updated records for {symbol}"
+                    )
+
+                    # Invalidate cache for this symbol
+                    invalidate_symbol_cache(symbol)
+
+            # Get complete dataset from database
+            from .storage import get_market_data
+
+            complete_data = get_market_data(
+                session, symbol, _safe_date(start_date), _safe_date(end_date)
+            )
+
+            if complete_data:
+                df = self._convert_market_data_to_dataframe(complete_data)
+                # Cache the complete result
+                set_cached_market_data(
+                    symbol, _safe_date(start_date), _safe_date(end_date), complete_data
+                )
+                return df
+            else:
+                logger.warning(f"No complete data available for {symbol}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error in incremental fetch for {symbol}: {str(e)}")
+            return None
+
+    def _convert_market_data_to_dataframe(self, market_data_objects):
+        """
+        Convert MarketData objects to pandas DataFrame.
+
+        Args:
+            market_data_objects: List of MarketData objects
+
+        Returns:
+            DataFrame with OHLCV data
+        """
+        if not market_data_objects:
+            return pd.DataFrame()
+
+        data = []
+        for record in market_data_objects:
+            data.append(
+                {
+                    "Date": record.date,
+                    "Open": float(record.open_price),
+                    "High": float(record.high_price),
+                    "Low": float(record.low_price),
+                    "Close": float(record.close_price),
+                    "Volume": int(record.volume),
+                    "Adj Close": float(record.adj_close),
+                }
+            )
+
+        df = pd.DataFrame(data)
+        df.set_index("Date", inplace=True)
+        df.sort_index(inplace=True)
+        return df
+
+    def incremental_collect_and_transform(
+        self,
+        session,
+        symbol: str,
+        start_date=None,
+        end_date=None,
+        period=None,
+        force_update=False,
+    ) -> List[MarketData]:
+        """
+        Collect and transform data incrementally, only fetching missing data.
+
+        Args:
+            session: SQLAlchemy session for database operations
+            symbol: Stock or crypto symbol
+            start_date: Start date (optional)
+            end_date: End date (optional)
+            period: Period string (optional)
+            force_update: Whether to force update existing data
+
+        Returns:
+            List of MarketData objects
+        """
+        # Use the incremental fetch method from alpaca_collector
+        df = self.incremental_fetch_daily_data(
+            session=session,
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            period=period,
+            force_update=force_update,
+        )
+
+        if df is not None and not df.empty:
+            return self.transform_to_market_data(symbol, df)
+        else:
+            return []
 
     def transform_to_market_data(
         self, symbol: str, df: pd.DataFrame

@@ -191,8 +191,23 @@ class TodayInvestmentAnalyzer:
 
         for symbol in symbols_list:
             try:
-                # Fetch 1 year of daily data
-                data = self.data_collector.fetch_daily_data(symbol, period="1y")
+                # Use incremental data loading for better performance
+                try:
+                    # Try to get database session for incremental loading
+                    from data.storage import get_session
+                    session = get_session()
+                    
+                    # Use incremental fetch if session is available
+                    data = self.data_collector.incremental_fetch_daily_data(
+                        session=session,
+                        symbol=symbol,
+                        period="1y"
+                    )
+                    session.close()
+                except Exception as session_error:
+                    logger.warning(f"Could not use incremental loading for {symbol}: {session_error}")
+                    # Fallback to regular fetch
+                    data = self.data_collector.fetch_daily_data(symbol, period="1y")
 
                 if data is not None and not data.empty and len(data) >= 250:
                     market_data[symbol] = data

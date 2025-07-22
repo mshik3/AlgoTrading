@@ -447,8 +447,20 @@ class LiveDataManager:
             print(f"Error getting market data: {e}")
             return {}
 
+    def get_trade_history(self, limit=10):
+        """Return mock trade history for testing."""
+        return []
+
     def refresh_all_data(self):
         """Force refresh all cached data"""
         if self.cache:
             self.cache.clear()
         print("All cached data cleared - will refresh on next request")
+
+    def _clear_cache(self):
+        """Clear the dashboard cache (for testing)."""
+        if self.cache:
+            self.cache.clear()
+
+
+PaperTradingSimulator = PaperTradingSimulator

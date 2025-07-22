@@ -13,7 +13,7 @@ import os
 
 from data import get_collector, DataProcessor, get_engine, init_db, get_session
 from strategies.equity.golden_cross import GoldenCrossStrategy
-from execution.paper import PaperTradingSimulator
+from dashboard.data.live_data import PaperTradingSimulator
 from backtesting import BacktestingEngine, PerformanceMetrics
 
 

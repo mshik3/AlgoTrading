@@ -242,6 +242,45 @@ The system tracks comprehensive performance metrics:
 - **Average Trade**: Mean profit/loss per trade
 - **Volatility**: Portfolio price variability
 
+## Incremental Data Loading
+
+The system now includes intelligent incremental data loading to significantly improve performance:
+
+### Key Features
+
+- **Smart Delta Detection**: Only downloads missing data by checking local database first
+- **Caching System**: In-memory caching for frequently accessed data
+- **Bulk Operations**: Optimized database operations for large datasets
+- **Gap Detection**: Automatically detects and fills data gaps
+- **Batch Processing**: Efficient processing of multiple symbols
+
+### Performance Benefits
+
+- **Faster Strategy Runs**: Subsequent runs use cached/existing data
+- **Reduced API Calls**: Only fetches missing dates, not entire datasets
+- **Lower Bandwidth**: Minimal data transfer for daily updates
+- **Better Reliability**: Handles network issues gracefully with fallbacks
+
+### Usage
+
+The incremental loading is automatically used by all data collection methods:
+
+```python
+# Automatic incremental loading
+data = collector.incremental_fetch_daily_data(session, "SPY", period="1y")
+
+# Batch processing for multiple symbols
+batch_data = collector.incremental_fetch_batch(session, ["SPY", "QQQ", "VTI"])
+```
+
+### Testing
+
+Test the incremental loading system:
+
+```bash
+python test_incremental_loading.py
+```
+
 ## Troubleshooting
 
 ### Common Issues

@@ -50,7 +50,7 @@ def create_tradingview_widget(symbol="AAPL", theme="dark", width="100%", height=
         [
             html.Div(
                 id=f"tradingview-{symbol.lower()}",
-                dangerouslySetInnerHTML={"__html": widget_html},
+                children=widget_html,
                 style={
                     "height": height,
                     "width": width,
@@ -99,7 +99,7 @@ def create_mini_chart_widget(symbol="SPX", width="100%", height="200"):
     """
 
     return html.Div(
-        dangerouslySetInnerHTML={"__html": widget_html},
+        children=widget_html,
         style={
             "height": height,
             "width": width,
@@ -160,7 +160,7 @@ def create_market_overview_widget():
         [
             html.H6("Market Overview", className="chart-title mb-3"),
             html.Div(
-                dangerouslySetInnerHTML={"__html": widget_html},
+                children=widget_html,
                 style={"minHeight": "300px"},
             ),
         ],
@@ -197,7 +197,7 @@ def create_economic_calendar_widget():
         [
             html.H6("Economic Calendar", className="chart-title mb-3"),
             html.Div(
-                dangerouslySetInnerHTML={"__html": widget_html},
+                children=widget_html,
                 style={"minHeight": "300px"},
             ),
         ],

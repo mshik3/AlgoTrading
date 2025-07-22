@@ -18,6 +18,18 @@ from .storage import (
     get_active_symbols,
     log_collection_start,
     log_collection_end,
+    # Database migration functions
+    migrate_volume_column_to_bigint,
+    # Incremental loading functions
+    get_symbol_data_range,
+    get_symbols_data_summary,
+    get_missing_date_ranges,
+    detect_data_gaps,
+    # Caching functions
+    get_cached_market_data,
+    set_cached_market_data,
+    invalidate_symbol_cache,
+    clear_data_cache,
 )
 
 __all__ = [
@@ -38,4 +50,16 @@ __all__ = [
     "get_active_symbols",
     "log_collection_start",
     "log_collection_end",
+    # Database migration functions
+    "migrate_volume_column_to_bigint",
+    # Incremental loading functions
+    "get_symbol_data_range",
+    "get_symbols_data_summary",
+    "get_missing_date_ranges",
+    "detect_data_gaps",
+    # Caching functions
+    "get_cached_market_data",
+    "set_cached_market_data",
+    "invalidate_symbol_cache",
+    "clear_data_cache",
 ]

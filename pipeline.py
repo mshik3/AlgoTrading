@@ -205,7 +205,7 @@ def initialize_symbols(session, symbols=None):
 
 def collect_market_data(session, symbol, period="5y", force_update=False):
     """
-    Collect market data for a symbol using Alpaca.
+    Collect market data for a symbol using Alpaca with incremental loading.
 
     Args:
         session: SQLAlchemy session
@@ -232,23 +232,38 @@ def collect_market_data(session, symbol, period="5y", force_update=False):
     collector = get_collector(
         "alpaca", api_key=api_key, secret_key=secret_key, paper=True
     )
-    processor = DataProcessor()
 
     try:
-        # Fetch data from Alpaca
-        market_data = collector.collect_and_transform(symbol, period=period)
+        # Use incremental loading instead of full data fetch
+        logger.info(f"Starting incremental data collection for {symbol}")
+        
+        # Use the incremental fetch method
+        data = collector.incremental_fetch_daily_data(
+            session=session,
+            symbol=symbol,
+            period=period,
+            force_update=force_update
+        )
 
-        if not market_data:
+        if data is None or data.empty:
             logger.warning(f"No data collected for {symbol}")
             return 0, 0, False
 
-        # Save data
-        new_records, updated_records = save_market_data(session, market_data)
-        logger.info(
-            f"Collected data for {symbol}: {new_records} new, {updated_records} updated"
-        )
-
-        return new_records, updated_records, False
+        # Count new and updated records by checking what was actually saved
+        from data.storage import get_symbol_data_range
+        data_range = get_symbol_data_range(session, symbol)
+        
+        if data_range["has_data"]:
+            logger.info(
+                f"Incremental collection for {symbol}: {data_range['total_records']} total records "
+                f"(from {data_range['earliest_date']} to {data_range['latest_date']})"
+            )
+            # For incremental loading, we can't easily track new vs updated
+            # So we'll estimate based on the data range
+            return data_range["total_records"], 0, False
+        else:
+            logger.warning(f"No data available for {symbol} after collection")
+            return 0, 0, False
 
     except Exception as e:
         logger.error(f"Error collecting data for {symbol}: {str(e)}")

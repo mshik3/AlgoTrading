@@ -24,6 +24,31 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+
+# --- PATCH: Add safe_date helper ---
+def _safe_date(dt):
+    """
+    Safely convert datetime to date object.
+
+    Args:
+        dt: datetime, date, or compatible object
+
+    Returns:
+        date object
+
+    Raises:
+        TypeError: If dt is not a datetime or date object
+    """
+    from datetime import datetime, date
+
+    if isinstance(dt, datetime):
+        return dt.date()
+    elif isinstance(dt, date):
+        return dt
+    else:
+        raise TypeError(f"Expected datetime or date, got {type(dt)}")
+
+
 # Alpaca SDK
 try:
     from alpaca.data import (
@@ -412,7 +437,7 @@ class AlpacaDataCollector:
                 end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
 
             logger.info(
-                f"Fetching {symbol} data from {start_date.date()} to {end_date.date()}"
+                f"Fetching {symbol} data from {_safe_date(start_date)} to {_safe_date(end_date)}"
             )
 
             if not ALPACA_AVAILABLE:
@@ -510,22 +535,27 @@ class AlpacaDataCollector:
                 logger.warning(f"Empty DataFrame for {symbol} ({alpaca_symbol})")
                 return None
 
-            # Rename columns to match expected format (lowercase for consistency)
+            # Convert timestamp to Date column and set as index
+            if "timestamp" in df.columns:
+                df["Date"] = pd.to_datetime(df["timestamp"]).dt.date
+                df.set_index("Date", inplace=True)
+
+            # Rename columns to match expected format (proper case for consistency)
             df = df.rename(
                 columns={
-                    "open": "open",
-                    "high": "high",
-                    "low": "low",
-                    "close": "close",
-                    "volume": "volume",
+                    "open": "Open",
+                    "high": "High",
+                    "low": "Low",
+                    "close": "Close",
+                    "volume": "Volume",
                 }
             )
 
             # Add adj_close column (use close for now, Alpaca doesn't provide adjusted)
-            df["adj_close"] = df["close"]
+            df["Adj Close"] = df["Close"]
 
             # Ensure all required columns are present
-            required_cols = ["open", "high", "low", "close", "volume", "adj_close"]
+            required_cols = ["Open", "High", "Low", "Close", "Volume", "Adj Close"]
             if not all(col in df.columns for col in required_cols):
                 missing = [col for col in required_cols if col not in df.columns]
                 logger.error(f"Missing required columns for {symbol}: {missing}")
@@ -688,6 +718,542 @@ class AlpacaDataCollector:
 
         return combined_data
 
+    def incremental_fetch_daily_data(
+        self,
+        session,
+        symbol: str,
+        start_date: Optional[Union[datetime, str]] = None,
+        end_date: Optional[Union[datetime, str]] = None,
+        period: Optional[str] = None,
+        force_update: bool = False,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch daily data incrementally, only downloading missing data.
+
+        Args:
+            session: SQLAlchemy session for database operations
+            symbol: Stock symbol
+            start_date: Start date for data collection
+            end_date: End date for data collection
+            period: Period string (e.g., '5y' for 5 years)
+            force_update: Whether to force update existing data
+
+        Returns:
+            DataFrame with complete OHLCV data or None if failed
+        """
+        from datetime import datetime, timedelta
+        from .storage import (
+            get_symbol_data_range,
+            get_missing_date_ranges,
+            get_cached_market_data,
+            set_cached_market_data,
+            invalidate_symbol_cache,
+        )
+
+        try:
+            # Convert period to dates if provided
+            if period:
+                end_date = datetime.now()
+                if period == "5y":
+                    start_date = end_date - timedelta(days=5 * 365)
+                elif period == "2y":
+                    start_date = end_date - timedelta(days=2 * 365)
+                elif period == "1y":
+                    start_date = end_date - timedelta(days=365)
+                elif period == "6mo":
+                    start_date = end_date - timedelta(days=180)
+                elif period == "3mo":
+                    start_date = end_date - timedelta(days=90)
+                elif period == "1mo":
+                    start_date = end_date - timedelta(days=30)
+                else:
+                    start_date = end_date - timedelta(days=365)
+
+            # Ensure we have start and end dates
+            if not end_date:
+                end_date = datetime.now()
+            if not start_date:
+                start_date = end_date - timedelta(days=365)
+
+            # Convert string dates to datetime
+            if isinstance(start_date, str):
+                start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+
+            # Check cache first
+            cached_data = get_cached_market_data(
+                symbol, _safe_date(start_date), _safe_date(end_date)
+            )
+            if cached_data and not force_update:
+                logger.info(f"Using cached data for {symbol}")
+                return self._convert_market_data_to_dataframe(cached_data)
+
+            # Check if we need to fetch any data
+            if not force_update:
+                data_range = get_symbol_data_range(session, symbol)
+
+                if data_range["has_data"]:
+                    # Check if we have all the data we need
+                    if data_range["earliest_date"] <= _safe_date(
+                        start_date
+                    ) and data_range["latest_date"] >= _safe_date(end_date):
+                        logger.info(
+                            f"All data for {symbol} already available in database"
+                        )
+                        # Get data from database
+                        from .storage import get_market_data
+
+                        db_data = get_market_data(
+                            session,
+                            symbol,
+                            _safe_date(start_date),
+                            _safe_date(end_date),
+                        )
+                        if db_data:
+                            df = self._convert_market_data_to_dataframe(db_data)
+                            # Cache the result
+                            set_cached_market_data(
+                                symbol,
+                                _safe_date(start_date),
+                                _safe_date(end_date),
+                                db_data,
+                            )
+                            return df
+
+            # Calculate missing date ranges
+            missing_ranges = get_missing_date_ranges(
+                session, symbol, _safe_date(start_date), _safe_date(end_date)
+            )
+
+            if not missing_ranges and not force_update:
+                logger.info(f"No missing data for {symbol}")
+                # Get existing data from database
+                from .storage import get_market_data
+
+                db_data = get_market_data(
+                    session, symbol, _safe_date(start_date), _safe_date(end_date)
+                )
+                if db_data:
+                    df = self._convert_market_data_to_dataframe(db_data)
+                    set_cached_market_data(
+                        symbol, _safe_date(start_date), _safe_date(end_date), db_data
+                    )
+                    return df
+
+            # 🚀 OPTIMIZED: Use intelligent strategy to minimize API calls
+            # Analyze gaps to determine the most efficient fetching approach
+            strategy_analysis = self._analyze_gaps_for_optimal_strategy(
+                missing_ranges, start_date, end_date
+            )
+
+            logger.info(
+                f"📊 Strategy for {symbol}: {strategy_analysis['strategy']} - {strategy_analysis['reason']}"
+            )
+            if strategy_analysis.get("api_calls_saved", 0) > 0:
+                logger.info(
+                    f"💡 Optimization will save {strategy_analysis['api_calls_saved']} API calls!"
+                )
+
+            new_records_total = 0
+            updated_records_total = 0
+
+            if strategy_analysis["strategy"] == "bulk":
+                # Use optimized bulk fetching strategy
+                new_records, updated_records, total_fetched = (
+                    self._bulk_fetch_with_deduplication(
+                        session, symbol, start_date, end_date
+                    )
+                )
+                new_records_total += new_records
+                updated_records_total += updated_records
+
+                if new_records > 0 or updated_records > 0:
+                    # Invalidate cache for this symbol
+                    invalidate_symbol_cache(symbol)
+
+            elif strategy_analysis["strategy"] == "incremental":
+                # Use traditional incremental approach for large consecutive gaps
+                logger.info(
+                    f"Using incremental strategy for {len(missing_ranges)} large gaps"
+                )
+
+                all_fetched_data = []
+                for range_start, range_end in missing_ranges:
+                    gap_days = (range_end - range_start).days + 1
+                    logger.info(
+                        f"Fetching gap for {symbol}: {_safe_date(range_start)} to {_safe_date(range_end)} ({gap_days} days)"
+                    )
+
+                    try:
+                        # Fetch data for this range
+                        range_data = self.fetch_daily_data(
+                            symbol,
+                            start_date=_safe_date(range_start),
+                            end_date=_safe_date(range_end),
+                        )
+
+                        if range_data is not None and not range_data.empty:
+                            all_fetched_data.append(range_data)
+                            logger.info(
+                                f"✓ Fetched {len(range_data)} records for gap ({_safe_date(range_start)} to {_safe_date(range_end)})"
+                            )
+                        else:
+                            logger.warning(
+                                f"No data fetched for gap ({_safe_date(range_start)} to {_safe_date(range_end)})"
+                            )
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error fetching gap for {symbol} ({_safe_date(range_start)} to {_safe_date(range_end)}): {str(e)}"
+                        )
+
+                # Combine and save incremental data
+                if all_fetched_data:
+                    combined_fetched = pd.concat(all_fetched_data)
+                    # Remove duplicates based on index (Date) and sort
+                    combined_fetched = combined_fetched[
+                        ~combined_fetched.index.duplicated(keep="last")
+                    ]
+                    combined_fetched = combined_fetched.sort_index()
+
+                    # Convert to MarketData objects and save
+                    market_data_objects = self.transform_to_market_data(
+                        symbol, combined_fetched
+                    )
+                    if market_data_objects:
+                        from .storage import save_market_data
+
+                        new_records, updated_records = save_market_data(
+                            session, market_data_objects
+                        )
+                        new_records_total += new_records
+                        updated_records_total += updated_records
+                        logger.info(
+                            f"Saved {new_records} new, {updated_records} updated records for {symbol}"
+                        )
+
+                        # Invalidate cache for this symbol
+                        invalidate_symbol_cache(symbol)
+
+            # Log final optimization results
+            if new_records_total > 0 or updated_records_total > 0:
+                logger.info(
+                    f"🎯 Optimization complete for {symbol}: {new_records_total} new, {updated_records_total} updated records using {strategy_analysis['strategy']} strategy"
+                )
+
+            # Get complete dataset from database
+            from .storage import get_market_data
+
+            complete_data = get_market_data(
+                session, symbol, _safe_date(start_date), _safe_date(end_date)
+            )
+
+            if complete_data:
+                df = self._convert_market_data_to_dataframe(complete_data)
+                # Cache the complete result
+                set_cached_market_data(
+                    symbol, _safe_date(start_date), _safe_date(end_date), complete_data
+                )
+                return df
+            else:
+                logger.warning(f"No complete data available for {symbol}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error in incremental fetch for {symbol}: {str(e)}")
+            return None
+
+    def _convert_market_data_to_dataframe(self, market_data_objects):
+        """
+        Convert MarketData objects to pandas DataFrame.
+
+        Args:
+            market_data_objects: List of MarketData objects
+
+        Returns:
+            DataFrame with OHLCV data
+        """
+        if not market_data_objects:
+            return pd.DataFrame()
+
+        data = []
+        for record in market_data_objects:
+            data.append(
+                {
+                    "Date": record.date,
+                    "Open": float(record.open_price),
+                    "High": float(record.high_price),
+                    "Low": float(record.low_price),
+                    "Close": float(record.close_price),
+                    "Volume": int(record.volume),
+                    "Adj Close": float(record.adj_close),
+                }
+            )
+
+        df = pd.DataFrame(data)
+        df.set_index("Date", inplace=True)
+        df.sort_index(inplace=True)
+        return df
+
+    def _analyze_gaps_for_optimal_strategy(
+        self, missing_ranges, total_start_date, total_end_date
+    ):
+        """
+        Analyze missing date ranges to determine the most efficient fetching strategy.
+
+        This method determines whether to:
+        1. Fetch the entire period in one API call (bulk strategy)
+        2. Fetch only missing ranges incrementally (incremental strategy)
+
+        Args:
+            missing_ranges: List of (start_date, end_date) tuples for missing data
+            total_start_date: Overall start date for the data request
+            total_end_date: Overall end date for the data request
+
+        Returns:
+            dict: Strategy analysis with recommendation
+        """
+        from datetime import timedelta
+
+        if not missing_ranges:
+            return {"strategy": "none", "reason": "No missing data"}
+
+        # Calculate total requested period
+        total_days = (total_end_date - total_start_date).days + 1
+
+        # Calculate total missing days
+        missing_days = sum(
+            (end_date - start_date).days + 1 for start_date, end_date in missing_ranges
+        )
+
+        # Calculate largest gap
+        largest_gap = max(
+            (end_date - start_date).days + 1 for start_date, end_date in missing_ranges
+        )
+
+        # Calculate number of separate gaps
+        num_gaps = len(missing_ranges)
+
+        # Missing data percentage
+        missing_percentage = missing_days / total_days if total_days > 0 else 0
+
+        logger.info(
+            f"Gap analysis: {missing_days}/{total_days} days missing ({missing_percentage:.1%}), {num_gaps} gaps, largest gap: {largest_gap} days"
+        )
+
+        # Strategy decision logic
+        strategy_reasons = []
+
+        # Use bulk strategy if:
+        # 1. More than 70% of data is missing (likely new symbol)
+        if missing_percentage > 0.70:
+            return {
+                "strategy": "bulk",
+                "reason": f"High missing percentage ({missing_percentage:.1%}) suggests new symbol - bulk fetch more efficient",
+                "api_calls_saved": num_gaps - 1,
+                "total_days": total_days,
+                "missing_days": missing_days,
+                "num_gaps": num_gaps,
+            }
+
+        # 2. Many small gaps (more than 5 gaps for periods > 6 months)
+        if num_gaps > 5 and total_days > 180:
+            return {
+                "strategy": "bulk",
+                "reason": f"{num_gaps} separate gaps would require {num_gaps} API calls - bulk fetch more efficient",
+                "api_calls_saved": num_gaps - 1,
+                "total_days": total_days,
+                "missing_days": missing_days,
+                "num_gaps": num_gaps,
+            }
+
+        # 3. Small total period (< 3 months) with any gaps
+        if total_days < 90 and missing_days > 0:
+            return {
+                "strategy": "bulk",
+                "reason": f"Short period ({total_days} days) - single API call more efficient than {num_gaps} incremental calls",
+                "api_calls_saved": num_gaps - 1,
+                "total_days": total_days,
+                "missing_days": missing_days,
+                "num_gaps": num_gaps,
+            }
+
+        # 4. Scattered small gaps (average gap size < 30 days)
+        avg_gap_size = missing_days / num_gaps if num_gaps > 0 else 0
+        if num_gaps > 2 and avg_gap_size < 30:
+            return {
+                "strategy": "bulk",
+                "reason": f"Many small gaps (avg {avg_gap_size:.1f} days) - bulk fetch avoids {num_gaps} API calls",
+                "api_calls_saved": num_gaps - 1,
+                "total_days": total_days,
+                "missing_days": missing_days,
+                "num_gaps": num_gaps,
+            }
+
+        # Use incremental strategy for:
+        # 1. Few large gaps where incremental makes sense
+        # 2. Low missing percentage with large consecutive gaps
+        return {
+            "strategy": "incremental",
+            "reason": f"Large consecutive gaps ({largest_gap} days max) - incremental fetch most efficient",
+            "api_calls_saved": 0,
+            "total_days": total_days,
+            "missing_days": missing_days,
+            "num_gaps": num_gaps,
+        }
+
+    def _bulk_fetch_with_deduplication(self, session, symbol, start_date, end_date):
+        """
+        Fetch entire period in one API call and deduplicate against existing database data.
+
+        This method is used when the gap analysis determines that a bulk fetch
+        is more efficient than multiple incremental API calls.
+
+        Args:
+            session: SQLAlchemy session for database operations
+            symbol: Stock or crypto symbol
+            start_date: Start date for data collection
+            end_date: End date for data collection
+
+        Returns:
+            tuple: (new_records_saved, updated_records, total_fetched)
+        """
+        from .storage import get_market_data, save_market_data
+
+        logger.info(
+            f"🚀 Bulk fetching {symbol} from {_safe_date(start_date)} to {_safe_date(end_date)} (OPTIMIZED)"
+        )
+
+        try:
+            # Fetch entire period in ONE API call
+            bulk_data = self.fetch_daily_data(
+                symbol, start_date=start_date, end_date=end_date
+            )
+
+            if bulk_data is None or bulk_data.empty:
+                logger.warning(f"Bulk fetch returned no data for {symbol}")
+                return 0, 0, 0
+
+            logger.info(f"✓ Bulk fetched {len(bulk_data)} days of data for {symbol}")
+
+            # Get existing data from database to identify what's already there
+            existing_data = get_market_data(
+                session, symbol, _safe_date(start_date), _safe_date(end_date)
+            )
+
+            # Create a set of existing dates for fast lookup
+            existing_dates = set()
+            if existing_data:
+                existing_dates = {record.date for record in existing_data}
+                logger.info(
+                    f"Found {len(existing_dates)} existing dates for {symbol} in database"
+                )
+
+            # Filter bulk data to only include new/missing dates
+            if existing_dates:
+                # Only keep dates that are NOT in the database
+                bulk_data_filtered = bulk_data[~bulk_data.index.isin(existing_dates)]
+                logger.info(
+                    f"After deduplication: {len(bulk_data_filtered)} new records to save for {symbol}"
+                )
+            else:
+                bulk_data_filtered = bulk_data
+                logger.info(
+                    f"No existing data - will save all {len(bulk_data_filtered)} records for {symbol}"
+                )
+
+            if bulk_data_filtered.empty:
+                logger.info(
+                    f"No new data to save for {symbol} - all data already in database"
+                )
+                return 0, 0, len(bulk_data)
+
+            # Convert to MarketData objects and save
+            market_data_objects = self.transform_to_market_data(
+                symbol, bulk_data_filtered
+            )
+            if market_data_objects:
+                new_records, updated_records = save_market_data(
+                    session, market_data_objects
+                )
+                logger.info(
+                    f"✅ Bulk save complete for {symbol}: {new_records} new, {updated_records} updated records"
+                )
+                return new_records, updated_records, len(bulk_data)
+            else:
+                logger.warning(
+                    f"Failed to convert DataFrame to MarketData objects for {symbol}"
+                )
+                return 0, 0, len(bulk_data)
+
+        except Exception as e:
+            logger.error(f"Error in bulk fetch for {symbol}: {str(e)}")
+            return 0, 0, 0
+
+    def incremental_fetch_batch(
+        self,
+        session,
+        symbols: List[str],
+        start_date: Optional[Union[datetime, str]] = None,
+        end_date: Optional[Union[datetime, str]] = None,
+        period: Optional[str] = None,
+        batch_size: int = 10,
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Fetch data incrementally for multiple symbols in batches.
+
+        Args:
+            session: SQLAlchemy session
+            symbols: List of symbols to fetch
+            start_date: Start date for data collection
+            end_date: End date for data collection
+            period: Period string
+            batch_size: Number of symbols to process in each batch
+
+        Returns:
+            Dictionary mapping symbol -> DataFrame
+        """
+        import time
+
+        logger.info(f"Starting incremental batch fetch for {len(symbols)} symbols")
+
+        results = {}
+        total_batches = (len(symbols) + batch_size - 1) // batch_size
+
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i : i + batch_size]
+            batch_num = (i // batch_size) + 1
+
+            logger.info(
+                f"Processing batch {batch_num}/{total_batches} ({len(batch)} symbols)"
+            )
+
+            for symbol in batch:
+                try:
+                    data = self.incremental_fetch_daily_data(
+                        session, symbol, start_date, end_date, period
+                    )
+
+                    if data is not None and not data.empty:
+                        results[symbol] = data
+                        logger.debug(f"✓ {symbol}: {len(data)} days of data")
+                    else:
+                        logger.warning(f"✗ No data for {symbol}")
+
+                except Exception as e:
+                    logger.error(f"Error fetching {symbol}: {str(e)}")
+
+            # Rate limiting between batches
+            if batch_num < total_batches:
+                logger.info(f"Rate limiting: waiting 1 second before next batch")
+                time.sleep(1)
+
+        logger.info(
+            f"Incremental batch fetch complete: {len(results)} symbols successful"
+        )
+        return results
+
     def test_connection(self) -> bool:
         """
         Test the connection to Alpaca API.
@@ -713,6 +1279,91 @@ class AlpacaDataCollector:
         except Exception as e:
             logger.error(f"✗ Alpaca API connection failed: {str(e)}")
             return False
+
+    def transform_to_market_data(
+        self, symbol: str, df: pd.DataFrame
+    ) -> List["MarketData"]:
+        """
+        Transform DataFrame to MarketData objects.
+
+        Args:
+            symbol: Stock or crypto symbol
+            df: DataFrame with OHLCV data
+
+        Returns:
+            List of MarketData objects
+        """
+        from .storage import MarketData
+
+        if df is None or df.empty:
+            return []
+
+        market_data_list = []
+
+        # Handle different DataFrame index/column structures
+        if isinstance(df.index[0], str) and "Date" in df.columns:
+            # If Date is a column, iterate through rows using that
+            for idx, row in df.iterrows():
+                date_val = pd.to_datetime(row["Date"]).date()
+                market_data = MarketData(
+                    symbol=symbol,
+                    date=date_val,
+                    open_price=float(row.get("Open", row.get("open", 0))),
+                    high_price=float(row.get("High", row.get("high", 0))),
+                    low_price=float(row.get("Low", row.get("low", 0))),
+                    close_price=float(row.get("Close", row.get("close", 0))),
+                    volume=int(row.get("Volume", row.get("volume", 0))),
+                    adj_close=float(
+                        row.get("Adj Close", row.get("adj_close", row.get("close", 0)))
+                    ),
+                )
+                market_data_list.append(market_data)
+        elif hasattr(df.index[0], "date"):
+            # If index is already datetime/date objects
+            for date_val, row in df.iterrows():
+                market_data = MarketData(
+                    symbol=symbol,
+                    date=date_val.date() if hasattr(date_val, "date") else date_val,
+                    open_price=float(row.get("Open", row.get("open", 0))),
+                    high_price=float(row.get("High", row.get("high", 0))),
+                    low_price=float(row.get("Low", row.get("low", 0))),
+                    close_price=float(row.get("Close", row.get("close", 0))),
+                    volume=int(row.get("Volume", row.get("volume", 0))),
+                    adj_close=float(
+                        row.get("Adj Close", row.get("adj_close", row.get("close", 0)))
+                    ),
+                )
+                market_data_list.append(market_data)
+        else:
+            # Handle case where we need to extract date from timestamp column
+            for idx, row in df.iterrows():
+                # Try to get date from timestamp column if it exists
+                if "timestamp" in row:
+                    date_val = pd.to_datetime(row["timestamp"]).date()
+                elif "Date" in row:
+                    date_val = pd.to_datetime(row["Date"]).date()
+                else:
+                    # Fallback: use current date (this shouldn't happen in normal operation)
+                    date_val = datetime.now().date()
+                    logger.warning(
+                        f"No timestamp found for {symbol}, using current date"
+                    )
+
+                market_data = MarketData(
+                    symbol=symbol,
+                    date=date_val,
+                    open_price=float(row.get("Open", row.get("open", 0))),
+                    high_price=float(row.get("High", row.get("high", 0))),
+                    low_price=float(row.get("Low", row.get("low", 0))),
+                    close_price=float(row.get("Close", row.get("close", 0))),
+                    volume=int(row.get("Volume", row.get("volume", 0))),
+                    adj_close=float(
+                        row.get("Adj Close", row.get("adj_close", row.get("close", 0)))
+                    ),
+                )
+                market_data_list.append(market_data)
+
+        return market_data_list
 
 
 def get_alpaca_collector() -> AlpacaDataCollector:

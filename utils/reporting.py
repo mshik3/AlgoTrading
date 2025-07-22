@@ -12,7 +12,7 @@ import json
 
 from strategies.base import BaseStrategy, StrategySignal
 from backtesting import BacktestingEngine, PerformanceMetrics, BacktestResult
-from execution import PaperTradingSimulator
+from dashboard.data.live_data import PaperTradingSimulator
 
 logger = logging.getLogger(__name__)
 

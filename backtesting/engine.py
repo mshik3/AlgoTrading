@@ -155,6 +155,11 @@ class BacktestingEngine:
         total_return_pct = 0.0
         final_capital = self.initial_capital
 
+        # TODO: Properly track daily portfolio values during simulation
+        import pandas as pd
+
+        daily_values = pd.Series(dtype=float)
+
         # Generate performance metrics
         metrics_calculator = PerformanceMetrics()
         performance_metrics = metrics_calculator.calculate_all_metrics(
@@ -252,8 +257,10 @@ class BacktestingEngine:
         current_price = market_data[symbol].loc[date, "Close"]
 
         # Record signal for analysis (no actual execution in backtesting)
-        logger.info(f"Signal generated: {signal.signal_type} {symbol} @ ${current_price:.2f} on {date}")
-        
+        logger.info(
+            f"Signal generated: {signal.signal_type} {symbol} @ ${current_price:.2f} on {date}"
+        )
+
         # Add to completed trades for metrics calculation
         if signal.signal_type in [SignalType.BUY, SignalType.SELL]:
             # Simplified trade recording for strategy analysis

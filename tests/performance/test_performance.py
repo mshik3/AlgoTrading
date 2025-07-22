@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from data.processors import DataProcessor
 from strategies.equity.golden_cross import GoldenCrossStrategy
-from execution.paper import PaperTradingSimulator
+from dashboard.data.live_data import PaperTradingSimulator
 
 
 class TestDataProcessingPerformance:
