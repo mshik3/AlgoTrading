@@ -1,241 +1,287 @@
-# 🚀 Modern Algorithmic Trading System
+# AlgoTrading System
 
-**Powered by Industry-Standard Libraries**
+A Python-based algorithmic trading system designed for small accounts ($500-$1000) with a focus on tax efficiency, minimal operating costs, and maintainable infrastructure.
 
-This system has been completely modernized using battle-tested, professional-grade libraries instead of custom implementations. Your maintenance burden is now near zero while gaining access to sophisticated features used by banks and quantitative firms.
+## What This Is
 
-## 🌟 What's New
+This is a complete algorithmic trading system that:
 
-### ✅ Replaced Custom Code With Superior Libraries
+- Runs multiple diversified strategies across various assets
+- Uses industry-standard libraries (PFund, Backtrader, Cvxportfolio, PyPortfolioOpt)
+- Provides a professional dashboard with real-time Alpaca integration
+- Includes comprehensive backtesting and performance analysis
+- Supports both paper trading and live trading
 
-| **Component**              | **Before (Custom)**    | **After (Industry Standard)**                                          | **Benefits**                                     |
-| -------------------------- | ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------------ |
-| **Trading Strategies**     | Custom implementations | **PFund Framework**                                                    | ML-ready, TradFi+CeFi+DeFi, 1-line backtest→live |
-| **Portfolio Optimization** | Basic custom optimizer | **Cvxportfolio (Stanford/BlackRock)** + **PyPortfolioOpt (5k+ stars)** | Academic-grade multi-period optimization         |
-| **Backtesting**            | Custom engine          | **Backtrader (used by banks)**                                         | x2 EuroStoxx + x6 Quant firms use this           |
-| **Tax Optimization**       | Custom utilities       | **Professional Rebalancer Library**                                    | Mathematically rigorous tax-loss harvesting      |
-| **Risk Management**        | Basic implementation   | **Riskfolio-Lib** + **QuantLib**                                       | Advanced risk models and analytics               |
+## Quick Start
 
-## 🎯 Quick Start
-
-### Run the Complete Modern System
+### 1. Setup Environment
 
 ```bash
-# Install the new requirements
+# Clone and setup
+git clone <your-repo>
+cd AlgoTrading
+
+# Install dependencies
 pip install -r requirements.txt
 
-# See the power of modern libraries
-python modern_trading_system.py
+# Copy environment template
+cp env.example .env
 ```
 
-### Modern Portfolio Optimization
+Edit `.env` with your configuration:
 
-```python
-from portfolio.modern_portfolio_optimization import create_portfolio_optimizer
-import yfinance as yf
+```
+DB_HOST=localhost
+DB_NAME=algotrading
+DB_USER=your_username
+DB_PASSWORD=your_password
+DB_PORT=5432
 
-# Get price data
-symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']
-price_data = yf.download(symbols, period='2y')['Adj Close']
-
-# Create modern optimizer
-optimizer = create_portfolio_optimizer(price_data, method='pypfopt')
-
-# Optimize for maximum Sharpe ratio
-result = optimizer.optimize_max_sharpe(
-    risk_model='shrunk',
-    portfolio_value=100000,
-    weight_bounds=(0.05, 0.4)
-)
-
-print(f"Sharpe Ratio: {result['sharpe_ratio']:.2f}")
-print(f"Expected Return: {result['expected_annual_return']:.1%}")
-print("Portfolio Weights:", result['cleaned_weights'])
+# Required for Alpaca integration
+ALPACA_API_KEY=your_alpaca_key
+ALPACA_SECRET_KEY=your_alpaca_secret
 ```
 
-### Modern Strategy Backtesting
+### 2. Collect Market Data
 
-```python
-from backtesting.modern_backtesting import quick_backtest
-
-# Backtest Golden Cross strategy using professional Backtrader
-result = quick_backtest(
-    strategy_name='golden_cross',
-    symbols=['SPY'],
-    start_date='2022-01-01',
-    end_date='2024-01-01',
-    initial_cash=100000
-)
-
-print(f"Total Return: {result['total_return_pct']}")
-print(f"Sharpe Ratio: {result['sharpe_ratio']:.2f}")
-print(f"Win Rate: {result['trade_analysis']['win_rate']:.1f}%")
+```bash
+# Collect 5 years of data for SPY, QQQ, VTI
+python pipeline.py --task collect --symbols SPY QQQ VTI --period 5y
 ```
 
-### Modern Trading Strategies
+### 3. Run Backtesting
 
-```python
-from strategies.modern_strategies import create_strategy
-import pfund as pf
+```bash
+# Test Golden Cross strategy
+python pipeline.py --task backtest --strategy golden_cross --years 3
 
-# Create PFund-based strategy (switches backtest→live with 1 line!)
-strategy = create_strategy('golden_cross', fast_period=50, slow_period=200)
-
-# Use with PFund engine for ML-ready trading
-engine = pf.BacktestEngine(mode='vectorized')
-engine.add_strategy(strategy)
-# engine = pf.TradeEngine(env='LIVE')  # ← Just change this line for live trading!
+# Or use the dedicated test script
+python backtesting/test_golden_cross.py
 ```
 
-## 🏛️ Architecture: Industry Standards
+### 4. Generate Trading Signals
 
-### Trading Strategies: **PFund Framework**
-
-- **Used by**: Professional traders, ML researchers
-- **Features**: ML-ready, supports TradFi+CeFi+DeFi
-- **Benefit**: One line switches backtest→live trading
-
-### Portfolio Optimization: **Cvxportfolio + PyPortfolioOpt**
-
-- **Cvxportfolio**: Stanford/BlackRock academic-grade optimization
-- **PyPortfolioOpt**: 5k+ stars, community-tested
-- **Features**: Multi-period optimization, Black-Litterman, sophisticated risk models
-
-### Backtesting: **Backtrader**
-
-- **Used by**: x2 EuroStoxx banks, x6 Quantitative trading firms
-- **Features**: Battle-tested, extensive analytics, live trading capability
-- **Benefit**: Professional-grade performance metrics
-
-### Tax Optimization: **Professional Rebalancer Library**
-
-- **Features**: Mathematical optimization, wash sale avoidance, lot-level tracking
-- **Benefit**: ETrade API integration, rigorous tax-loss harvesting
-
-## 📊 Available Strategies
-
-All strategies now use the superior PFund framework:
-
-| Strategy          | Description                    | Features                          |
-| ----------------- | ------------------------------ | --------------------------------- |
-| `golden_cross`    | 50/200-day MA crossover        | Trend following, battle-tested    |
-| `mean_reversion`  | Statistical mean reversion     | Z-score based, Hurst validation   |
-| `sector_rotation` | Momentum-based sector rotation | Equal weight, monthly rebalancing |
-| `dual_momentum`   | Gary Antonacci's dual momentum | Absolute + relative momentum      |
-
-## 🔧 Advanced Features
-
-### Black-Litterman Optimization
-
-```python
-# Express your market views
-views = {
-    'AAPL': 0.15,    # Expect 15% return
-    'TSLA': -0.05,   # Bearish on TSLA
-}
-
-result = optimizer.black_litterman_optimization(views)
-print("BL Optimized Weights:", result['cleaned_weights'])
+```bash
+# Check current signals
+python pipeline.py --task signals --strategy golden_cross
 ```
 
-### Tax-Loss Harvesting
+### 5. Launch Dashboard
 
-```python
-# Professional rebalancer handles wash sales, lot tracking, etc.
-from utils.tax_rebalancer import optimize_with_tax_harvesting
-
-recommendations = optimize_with_tax_harvesting(
-    current_holdings=current_portfolio,
-    target_weights=optimized_weights,
-    tax_lots=tax_lot_data
-)
+```bash
+# Start the web dashboard
+python run_dashboard.py
 ```
 
-### Multi-Period Optimization
+## Trading Strategies
 
-```python
-# Academic-grade multi-period optimization
-optimizer = create_portfolio_optimizer(price_data, method='cvx')
+The system implements four diversified strategies designed for small accounts:
 
-result = optimizer.optimize_multi_period(
-    horizon=252,  # 1 year
-    transaction_cost=0.001,
-    risk_aversion=1.0
-)
-```
+### 1. Golden Cross Strategy
 
-## 🎯 Benefits of Modern Libraries
+- **Concept**: 50/200-day moving average crossover
+- **Allocation**: 50% broad market ETFs (SPY, QQQ), 50% large-cap stocks
+- **Frequency**: Few trades per year, trend-following
+- **Risk**: Medium
 
-### ✅ **Zero Maintenance Burden**
+### 2. Mean Reversion Strategy
 
-- Libraries are maintained by teams of experts
-- Continuous updates and improvements
-- Extensive testing and validation
+- **Concept**: Identifies assets 2+ standard deviations from 50-day moving average
+- **Allocation**: 60% individual stocks, 40% sector ETFs
+- **Frequency**: Weekly review and adjustments
+- **Risk**: Medium-High
 
-### ✅ **Superior Performance**
+### 3. ETF Rotation Strategy
 
-- Optimized algorithms and implementations
-- Battle-tested by professional firms
-- Mathematical rigor and academic backing
+- **Concept**: Rotates to strongest sector ETFs based on 3-month performance
+- **Allocation**: 100% sector ETFs
+- **Frequency**: Monthly rotation
+- **Risk**: Medium
 
-### ✅ **Comprehensive Features**
+### 4. Dual Momentum Strategy
 
-- Advanced risk models and analytics
-- Professional tax optimization
-- ML-ready architecture
-- Live trading capabilities
+- **Concept**: Gary Antonacci's absolute + relative momentum approach
+- **Allocation**: Diversified across asset classes
+- **Frequency**: Monthly rebalancing
+- **Risk**: Medium
 
-### ✅ **Community & Documentation**
+## System Architecture
 
-- Large user communities
-- Extensive documentation
-- Stack Overflow support
-- Regular updates and features
+### Core Components
 
-## 📈 Performance Comparison
+1. **Data Pipeline** (`pipeline.py`)
 
-| Metric               | Custom Implementation | Modern Libraries   |
-| -------------------- | --------------------- | ------------------ |
-| **Development Time** | Months                | Hours              |
-| **Maintenance**      | High burden           | Near zero          |
-| **Features**         | Basic                 | Professional-grade |
-| **Testing**          | Limited               | Extensive          |
-| **Performance**      | Unoptimized           | Battle-tested      |
-| **Support**          | None                  | Community + docs   |
+   - Collects market data from Alpaca API
+   - Processes and stores data in PostgreSQL
+   - Handles symbol normalization and data validation
 
-## 🚀 Next Steps
+2. **Strategy Engine** (`strategies/`)
 
-1. **Test the system**: Run `python modern_trading_system.py`
-2. **Customize strategies**: Modify parameters in PFund strategies
-3. **Live trading**: Change one line from BacktestEngine to TradeEngine
-4. **Advanced features**: Explore Black-Litterman, tax harvesting, multi-period optimization
+   - Implements all four trading strategies
+   - Generates buy/sell signals
+   - Includes risk management and position sizing
 
-## 🛠️ Dependencies
+3. **Backtesting Engine** (`backtesting/`)
 
-All modern libraries are specified in `requirements.txt`:
+   - Historical performance validation
+   - Comprehensive metrics (Sharpe ratio, drawdown, win rate)
+   - Uses Backtrader framework (industry standard)
+
+4. **Execution Engine** (`execution/`)
+
+   - Paper trading and live trading capabilities
+   - Alpaca API integration
+   - Order management and position tracking
+
+5. **Dashboard** (`dashboard/`)
+   - Web-based interface for monitoring
+   - Real-time portfolio tracking
+   - Performance analytics and reporting
+
+### Key Libraries Used
 
 - **PFund**: Modern ML-ready algo-trading framework
 - **Backtrader**: Professional backtesting (used by banks)
 - **Cvxportfolio**: Academic-grade portfolio optimization
-- **PyPortfolioOpt**: Community-tested optimization (5k+ stars)
-- **RiskFolio-Lib**: Advanced risk management
-- **QuantLib**: Mathematical finance library
+- **PyPortfolioOpt**: Community-tested optimization
+- **Alpaca**: Commission-free trading API
+- **PostgreSQL**: Trade tracking and performance metrics
 
-## 📚 Documentation
+## Portfolio Management
 
-- **PFund**: [pfund.ai](https://pfund.ai)
-- **Backtrader**: [backtrader.com](https://www.backtrader.com)
-- **Cvxportfolio**: [cvxportfolio.com](https://www.cvxportfolio.com)
-- **PyPortfolioOpt**: [pyportfolioopt.readthedocs.io](https://pyportfolioopt.readthedocs.io)
+### Small Account Safety Controls
 
-## ⚡ Migration Complete!
+For accounts under $1K, the system implements specific safety measures:
 
-Your trading system now uses industry-standard libraries that are:
+- **Position Limits**: Maximum $300 per position (30% of $1K)
+- **Minimum Position**: $50 per position (5% of $1K)
+- **Cash Buffer**: Maintain $100 minimum for opportunities
+- **Maximum Positions**: 4 positions for $1K account
+- **Position Sizing**: $200-300 based on signal confidence
 
-- **Battle-tested** by professional firms
-- **Continuously maintained** by expert teams
-- **Feature-rich** with capabilities you couldn't build yourself
-- **Performance-optimized** for production use
-- **Well-documented** with large communities
+### Risk Management
 
-**The maintenance burden is now near zero while capabilities are exponentially higher.**
+- **Stop Losses**: Automatic stop-loss placement
+- **Position Correlation**: Avoids highly correlated positions
+- **Sector Limits**: Maximum 40% in any single sector
+- **Cash Management**: Maintains liquidity for opportunities
+
+## Development and Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run specific test categories
+pytest tests/unit/
+pytest tests/integration/
+pytest tests/performance/
+```
+
+### Adding New Strategies
+
+1. Create strategy class in `strategies/`
+2. Implement required methods (generate_signals, etc.)
+3. Add to strategy factory in `strategies/modern_strategies.py`
+4. Create backtesting script
+5. Add to dashboard components
+
+### Code Structure
+
+```
+AlgoTrading/
+├── strategies/          # Trading strategy implementations
+├── backtesting/         # Backtesting engine and tests
+├── data/               # Data collection and processing
+├── execution/          # Order execution and Alpaca integration
+├── dashboard/          # Web dashboard and UI
+├── utils/              # Utilities and helpers
+├── tests/              # Test suite
+└── scripts/            # Utility scripts
+```
+
+## Production Deployment
+
+### Daily Automation
+
+The system can be automated for daily execution:
+
+```bash
+# Setup cron job for 4:30 PM ET daily execution
+0 16 30 * * * /path/to/python /path/to/scripts/daily_after_market.py
+```
+
+### Email Notifications
+
+Configure email notifications for daily signals and portfolio updates in `.env`:
+
+```
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password
+```
+
+### Monitoring
+
+- **Logs**: All operations logged to `logs/` directory
+- **Alerts**: Email notifications for critical events
+- **Dashboard**: Real-time monitoring via web interface
+- **Performance**: Automated performance tracking and reporting
+
+## Performance Metrics
+
+The system tracks comprehensive performance metrics:
+
+- **Total Return**: Overall portfolio performance
+- **Sharpe Ratio**: Risk-adjusted returns
+- **Maximum Drawdown**: Largest peak-to-trough decline
+- **Win Rate**: Percentage of profitable trades
+- **Average Trade**: Mean profit/loss per trade
+- **Volatility**: Portfolio price variability
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Database Connection Errors**
+
+   - Check PostgreSQL is running
+   - Verify credentials in `.env`
+   - Ensure database exists
+
+2. **Alpaca API Errors**
+
+   - Verify API keys in `.env`
+   - Check account status in Alpaca dashboard
+   - Ensure paper trading is enabled for testing
+
+3. **Data Collection Issues**
+   - Check internet connection
+   - Verify symbol names are valid
+   - Check Alpaca API rate limits
+
+### Getting Help
+
+- Check logs in `logs/` directory
+- Review test output for specific errors
+- Verify environment configuration
+- Check Alpaca account status
+
+## Contributing
+
+1. Fork the repository
+2. Create feature branch
+3. Add tests for new functionality
+4. Ensure all tests pass
+5. Submit pull request
+
+## License
+
+This project is for educational and personal use. Please ensure compliance with your local trading regulations and broker terms of service.
+
+## Disclaimer
+
+This software is for educational purposes only. Past performance does not guarantee future results. Trading involves risk of loss. Always test thoroughly with paper trading before using real money.
