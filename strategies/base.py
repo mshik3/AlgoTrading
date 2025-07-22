@@ -409,6 +409,111 @@ class BaseStrategy(ABC):
         """Add a signal to the history."""
         self.signals_history.append(signal)
 
+    def _normalize_dataframe_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalize DataFrame column names to lowercase for consistency.
+        
+        Args:
+            df: DataFrame with potentially mixed case column names
+            
+        Returns:
+            DataFrame with normalized lowercase column names
+        """
+        # Create a mapping for common column name variations
+        column_mapping = {
+            'Open': 'open',
+            'High': 'high', 
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume',
+            'Adj Close': 'adj_close',
+            'Adj_Close': 'adj_close',
+            'adj_close': 'adj_close',  # Already correct
+            'open': 'open',  # Already correct
+            'high': 'high',  # Already correct
+            'low': 'low',  # Already correct
+            'close': 'close',  # Already correct
+            'volume': 'volume',  # Already correct
+        }
+        
+        # Rename columns that need normalization
+        rename_dict = {}
+        for col in df.columns:
+            if col in column_mapping and col != column_mapping[col]:
+                rename_dict[col] = column_mapping[col]
+        
+        if rename_dict:
+            df = df.rename(columns=rename_dict)
+            logger.debug(f"Normalized column names: {rename_dict}")
+            
+        return df
+
+    def _get_close_price(self, data: pd.DataFrame) -> pd.Series:
+        """
+        Safely get close price series with fallback column names.
+        
+        Args:
+            data: DataFrame with OHLCV data
+            
+        Returns:
+            Series with close prices
+            
+        Raises:
+            KeyError: If no close price column can be found
+        """
+        # Normalize column names first
+        data = self._normalize_dataframe_columns(data)
+        
+        # Try different possible column names for close price
+        close_columns = ['close', 'Close', 'CLOSE']
+        for col in close_columns:
+            if col in data.columns:
+                return data[col]
+        
+        # If no close column found, raise error with helpful message
+        available_columns = list(data.columns)
+        raise KeyError(
+            f"No close price column found. Available columns: {available_columns}. "
+            f"Expected one of: {close_columns}"
+        )
+
+    def _validate_market_data(self, market_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+        """
+        Validate and normalize market data column names.
+        
+        Args:
+            market_data: Dictionary mapping symbol -> OHLCV DataFrame
+            
+        Returns:
+            Dictionary with normalized DataFrames
+        """
+        validated_data = {}
+        
+        for symbol, df in market_data.items():
+            if df is None or df.empty:
+                logger.warning(f"Skipping {symbol}: DataFrame is None or empty")
+                continue
+                
+            try:
+                # Normalize column names
+                normalized_df = self._normalize_dataframe_columns(df)
+                
+                # Validate required columns exist
+                required_cols = ['open', 'high', 'low', 'close', 'volume']
+                missing_cols = [col for col in required_cols if col not in normalized_df.columns]
+                
+                if missing_cols:
+                    logger.warning(f"Skipping {symbol}: Missing columns {missing_cols}")
+                    continue
+                    
+                validated_data[symbol] = normalized_df
+                
+            except Exception as e:
+                logger.error(f"Error validating data for {symbol}: {e}")
+                continue
+                
+        return validated_data
+
     def get_performance_summary(self) -> Dict[str, Any]:
         """
         Get basic performance metrics for the strategy.

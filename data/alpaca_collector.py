@@ -455,22 +455,22 @@ class AlpacaDataCollector:
                 logger.warning(f"Empty DataFrame for {symbol} ({alpaca_symbol})")
                 return None
 
-            # Rename columns to match expected format
+            # Rename columns to match expected format (lowercase for consistency)
             df = df.rename(
                 columns={
-                    "open": "Open",
-                    "high": "High",
-                    "low": "Low",
-                    "close": "Close",
-                    "volume": "Volume",
+                    "open": "open",
+                    "high": "high",
+                    "low": "low",
+                    "close": "close",
+                    "volume": "volume",
                 }
             )
 
-            # Add Adj Close column (use Close for now, Alpaca doesn't provide adjusted)
-            df["Adj Close"] = df["Close"]
+            # Add adj_close column (use close for now, Alpaca doesn't provide adjusted)
+            df["adj_close"] = df["close"]
 
             # Ensure all required columns are present
-            required_cols = ["Open", "High", "Low", "Close", "Volume", "Adj Close"]
+            required_cols = ["open", "high", "low", "close", "volume", "adj_close"]
             if not all(col in df.columns for col in required_cols):
                 missing = [col for col in required_cols if col not in df.columns]
                 logger.error(f"Missing required columns for {symbol}: {missing}")

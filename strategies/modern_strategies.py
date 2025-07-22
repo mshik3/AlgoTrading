@@ -63,17 +63,24 @@ class ModernGoldenCrossStrategy(BaseStrategy):
         """Generate trading signals using Golden Cross logic."""
         signals = []
 
-        for symbol, data in market_data.items():
+        # Validate and normalize market data
+        validated_data = self._validate_market_data(market_data)
+
+        for symbol, data in validated_data.items():
             if symbol not in self.symbols:
                 continue
 
             if len(data) < self.slow_period:
                 continue
 
-            # Calculate moving averages
-            close_prices = data["close"]
-            fast_ma = close_prices.rolling(self.fast_period).mean()
-            slow_ma = close_prices.rolling(self.slow_period).mean()
+            # Calculate moving averages using safe close price access
+            try:
+                close_prices = self._get_close_price(data)
+                fast_ma = close_prices.rolling(self.fast_period).mean()
+                slow_ma = close_prices.rolling(self.slow_period).mean()
+            except KeyError as e:
+                logger.warning(f"Skipping {symbol}: {e}")
+                continue
 
             # Check for Golden Cross
             if len(fast_ma) >= 2 and len(slow_ma) >= 2:
@@ -88,7 +95,7 @@ class ModernGoldenCrossStrategy(BaseStrategy):
                         symbol=symbol,
                         signal_type=SignalType.BUY,
                         confidence=0.8,
-                        price=data["close"].iloc[-1],
+                        price=close_prices.iloc[-1],
                         strategy_name=self.name,
                         metadata={
                             "fast_ma": current_fast,
@@ -107,7 +114,7 @@ class ModernGoldenCrossStrategy(BaseStrategy):
                         symbol=symbol,
                         signal_type=SignalType.SELL,
                         confidence=0.8,
-                        price=data["close"].iloc[-1],
+                        price=close_prices.iloc[-1],
                         strategy_name=self.name,
                         metadata={
                             "fast_ma": current_fast,
@@ -325,18 +332,25 @@ class ModernMeanReversionStrategy(BaseStrategy):
         """Generate trading signals using Mean Reversion logic."""
         signals = []
 
-        for symbol, data in market_data.items():
+        # Validate and normalize market data
+        validated_data = self._validate_market_data(market_data)
+
+        for symbol, data in validated_data.items():
             if symbol not in self.symbols:
                 continue
 
             if len(data) < self.lookback_period + 1:
                 continue
 
-            # Calculate Z-score
-            close_prices = data["close"]
-            mean_price = close_prices.rolling(self.lookback_period).mean()
-            std_price = close_prices.rolling(self.lookback_period).std()
-            current_price = close_prices.iloc[-1]
+            # Calculate Z-score using safe close price access
+            try:
+                close_prices = self._get_close_price(data)
+                mean_price = close_prices.rolling(self.lookback_period).mean()
+                std_price = close_prices.rolling(self.lookback_period).std()
+                current_price = close_prices.iloc[-1]
+            except KeyError as e:
+                logger.warning(f"Skipping {symbol}: {e}")
+                continue
 
             if len(mean_price) > 0 and len(std_price) > 0:
                 current_mean = mean_price.iloc[-1]
@@ -593,17 +607,25 @@ class ModernSectorRotationStrategy(BaseETFRotationStrategy):
         """Generate trading signals using Sector Rotation logic."""
         signals = []
 
+        # Validate and normalize market data
+        validated_data = self._validate_market_data(market_data)
+
         # Calculate sector momentum
         sector_momentum = {}
         for sector in self.sectors:
-            if sector in market_data:
-                data = market_data[sector]
+            if sector in validated_data:
+                data = validated_data[sector]
                 if len(data) >= 252:  # Need at least 1 year of data
-                    # Calculate 12-month momentum
-                    current_price = data["close"].iloc[-1]
-                    year_ago_price = data["close"].iloc[-252]
-                    momentum = (current_price - year_ago_price) / year_ago_price
-                    sector_momentum[sector] = momentum
+                    # Calculate 12-month momentum using safe close price access
+                    try:
+                        close_prices = self._get_close_price(data)
+                        current_price = close_prices.iloc[-1]
+                        year_ago_price = close_prices.iloc[-252]
+                        momentum = (current_price - year_ago_price) / year_ago_price
+                        sector_momentum[sector] = momentum
+                    except KeyError as e:
+                        logger.warning(f"Skipping {sector}: {e}")
+                        continue
 
         # Rank sectors by momentum
         if sector_momentum:
@@ -620,20 +642,25 @@ class ModernSectorRotationStrategy(BaseETFRotationStrategy):
 
             # Generate buy signals for top sectors
             for sector, momentum in top_sectors:
-                signal = StrategySignal(
-                    symbol=sector,
-                    signal_type=SignalType.BUY,
-                    confidence=min(0.9, (momentum + 0.2) / 0.4),  # Normalize confidence
-                    price=market_data[sector]["close"].iloc[-1],
-                    strategy_name=self.name,
-                    metadata={
-                        "momentum": momentum,
-                        "rank": len([s for s, m in ranked_sectors if m > momentum]) + 1,
-                        "top_n": self.top_n,
-                    },
-                )
-                signals.append(signal)
-                self.add_signal_to_history(signal)
+                try:
+                    close_prices = self._get_close_price(validated_data[sector])
+                    signal = StrategySignal(
+                        symbol=sector,
+                        signal_type=SignalType.BUY,
+                        confidence=min(0.9, (momentum + 0.2) / 0.4),  # Normalize confidence
+                        price=close_prices.iloc[-1],
+                        strategy_name=self.name,
+                        metadata={
+                            "momentum": momentum,
+                            "rank": len([s for s, m in ranked_sectors if m > momentum]) + 1,
+                            "top_n": self.top_n,
+                        },
+                    )
+                    signals.append(signal)
+                    self.add_signal_to_history(signal)
+                except KeyError as e:
+                    logger.warning(f"Skipping signal generation for {sector}: {e}")
+                    continue
 
         return signals
 
@@ -750,16 +777,25 @@ class ModernDualMomentumStrategy(BaseETFRotationStrategy):
         """Generate trading signals using Dual Momentum logic."""
         signals = []
 
+        # Validate and normalize market data
+        validated_data = self._validate_market_data(market_data)
+
         # Calculate absolute momentum for each asset
         asset_momentum = {}
         for asset in self.assets:
-            if asset in market_data:
-                data = market_data[asset]
+            if asset in validated_data:
+                data = validated_data[asset]
                 if len(data) >= self.lookback:
-                    current_price = data["close"].iloc[-1]
-                    lookback_price = data["close"].iloc[-self.lookback]
-                    momentum = (current_price - lookback_price) / lookback_price
-                    asset_momentum[asset] = momentum
+                    # Calculate momentum using safe close price access
+                    try:
+                        close_prices = self._get_close_price(data)
+                        current_price = close_prices.iloc[-1]
+                        lookback_price = close_prices.iloc[-self.lookback]
+                        momentum = (current_price - lookback_price) / lookback_price
+                        asset_momentum[asset] = momentum
+                    except KeyError as e:
+                        logger.warning(f"Skipping {asset}: {e}")
+                        continue
 
         # Store momentum scores for summary
         self.absolute_momentum_scores = asset_momentum.copy()
@@ -774,20 +810,24 @@ class ModernDualMomentumStrategy(BaseETFRotationStrategy):
                 self.defensive_mode = False
                 self.current_asset = best_symbol
 
-                signal = StrategySignal(
-                    symbol=best_symbol,
-                    signal_type=SignalType.BUY,
-                    confidence=min(0.9, (best_momentum + 0.1) / 0.3),
-                    price=market_data[best_symbol]["close"].iloc[-1],
-                    strategy_name=self.name,
-                    metadata={
-                        "momentum": best_momentum,
-                        "risk_free_rate": self.risk_free_rate,
-                        "lookback_days": self.lookback,
-                    },
-                )
-                signals.append(signal)
-                self.add_signal_to_history(signal)
+                try:
+                    close_prices = self._get_close_price(validated_data[best_symbol])
+                    signal = StrategySignal(
+                        symbol=best_symbol,
+                        signal_type=SignalType.BUY,
+                        confidence=min(0.9, (best_momentum + 0.1) / 0.3),
+                        price=close_prices.iloc[-1],
+                        strategy_name=self.name,
+                        metadata={
+                            "momentum": best_momentum,
+                            "risk_free_rate": self.risk_free_rate,
+                            "lookback_days": self.lookback,
+                        },
+                    )
+                    signals.append(signal)
+                    self.add_signal_to_history(signal)
+                except KeyError as e:
+                    logger.warning(f"Skipping signal generation for {best_symbol}: {e}")
             else:
                 # Go defensive - no signals (could be cash or bonds)
                 self.defensive_mode = True

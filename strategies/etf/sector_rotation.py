@@ -452,7 +452,7 @@ class SectorRotationStrategy(BaseETFRotationStrategy):
                     symbol=symbol,
                     signal_type=SignalType.CLOSE_LONG,
                     confidence=0.8,
-                    price=market_data[symbol]["Close"].iloc[-1],
+                    price=market_data[symbol]["close"].iloc[-1],
                     strategy_name=self.name,
                     metadata={
                         "exit_reason": "sector_rotation_rebalancing",
