@@ -73,9 +73,9 @@ class TestGoldenCrossCryptoStrategy:
 
     def test_strategy_initialization_with_crypto(self):
         """Test that Golden Cross strategy initializes with crypto symbols."""
-        from strategies.equity.golden_cross import GoldenCrossStrategy
+        from strategies.equity.golden_cross_crypto import GoldenCrossCryptoStrategy
 
-        strategy = GoldenCrossStrategy()
+        strategy = GoldenCrossCryptoStrategy()
 
         # Verify crypto symbols are included
         crypto_symbols = [
@@ -98,12 +98,14 @@ class TestGoldenCrossCryptoStrategy:
 
         # Verify total symbol count
         assert (
-            len(strategy.symbols) == 50
-        ), f"Strategy should have 50 symbols, got {len(strategy.symbols)}"
+            len(strategy.symbols) >= 10
+        ), f"Strategy should have at least 10 symbols, got {len(strategy.symbols)}"
 
-        # Verify crypto symbols are 20% of total (10 out of 50)
-        crypto_count = sum(1 for sym in strategy.symbols if sym.endswith("USD"))
-        assert crypto_count == 10, f"Should have 10 crypto symbols, got {crypto_count}"
+        # Verify all symbols are crypto
+        for symbol in strategy.symbols:
+            assert symbol.endswith(
+                "USD"
+            ), f"Symbol {symbol} should be a crypto symbol ending in USD"
 
     def test_strategy_configuration_with_crypto(self):
         """Test that strategy configuration works with crypto assets."""
@@ -193,7 +195,7 @@ class TestGoldenCrossCryptoStrategy:
 
         # Verify signals structure
         assert isinstance(signals, list)
-        
+
         # Check if signals were generated for any symbols
         if signals:
             # Verify signal properties

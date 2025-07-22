@@ -6,7 +6,9 @@ Handles all database operations using SQLAlchemy ORM.
 import os
 import time
 from datetime import datetime
+from typing import Dict, List, Tuple
 from sqlalchemy import (
+    and_,
     create_engine,
     Column,
     Integer,
@@ -19,6 +21,7 @@ from sqlalchemy import (
     Text,
     Index,
     ForeignKey,
+    func,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -1136,3 +1139,486 @@ def clear_data_cache():
     _data_cache.clear()
     _cache_timestamps.clear()
     logger.debug("Cleared all data cache")
+
+
+# === OPTIMIZED DATABASE QUERIES FOR STRATEGY DATA NEEDS ===
+
+
+def get_bulk_market_data(
+    session, symbols: List[str], start_date=None, end_date=None
+) -> Dict[str, List]:
+    """
+    Efficiently retrieve market data for multiple symbols in a single query.
+
+    This method is optimized for strategy execution where multiple symbols
+    need to be loaded simultaneously with maximum performance.
+
+    Args:
+        session: SQLAlchemy session
+        symbols: List of symbols to retrieve
+        start_date: Start date (inclusive)
+        end_date: End date (inclusive)
+
+    Returns:
+        Dictionary mapping symbol -> list of MarketData objects
+    """
+    from collections import defaultdict
+    from sqlalchemy import and_
+
+    if not symbols:
+        return {}
+
+    try:
+        # Build the base query
+        query = session.query(MarketData).filter(MarketData.symbol.in_(symbols))
+
+        # Add date filters if provided
+        if start_date:
+            query = query.filter(MarketData.date >= start_date)
+        if end_date:
+            query = query.filter(MarketData.date <= end_date)
+
+        # Order by symbol and date for optimal processing
+        query = query.order_by(MarketData.symbol, MarketData.date)
+
+        # Execute single query for all symbols
+        all_records = query.all()
+
+        # Group by symbol
+        result = defaultdict(list)
+        for record in all_records:
+            result[record.symbol].append(record)
+
+        logger.debug(
+            f"Bulk query retrieved {len(all_records)} records for {len(result)} symbols"
+        )
+        return dict(result)
+
+    except Exception as e:
+        logger.error(f"Bulk market data query failed: {str(e)}")
+        return {}
+
+
+def get_latest_market_data_bulk(
+    session, symbols: List[str], days_back: int = 1
+) -> Dict[str, MarketData]:
+    """
+    Get the latest market data record for multiple symbols efficiently.
+
+    Useful for getting current prices or latest available data points
+    for strategy execution.
+
+    Args:
+        session: SQLAlchemy session
+        symbols: List of symbols
+        days_back: Number of days to look back for latest record
+
+    Returns:
+        Dictionary mapping symbol -> latest MarketData record
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+
+    if not symbols:
+        return {}
+
+    try:
+        # Calculate date threshold
+        threshold_date = (datetime.now() - timedelta(days=days_back)).date()
+
+        # Subquery to find latest date for each symbol
+        latest_date_subquery = (
+            session.query(
+                MarketData.symbol, func.max(MarketData.date).label("latest_date")
+            )
+            .filter(MarketData.symbol.in_(symbols), MarketData.date >= threshold_date)
+            .group_by(MarketData.symbol)
+            .subquery()
+        )
+
+        # Join to get full records for latest dates
+        query = session.query(MarketData).join(
+            latest_date_subquery,
+            and_(
+                MarketData.symbol == latest_date_subquery.c.symbol,
+                MarketData.date == latest_date_subquery.c.latest_date,
+            ),
+        )
+
+        latest_records = query.all()
+
+        result = {record.symbol: record for record in latest_records}
+
+        logger.debug(f"Retrieved latest data for {len(result)}/{len(symbols)} symbols")
+        return result
+
+    except Exception as e:
+        logger.error(f"Latest market data bulk query failed: {str(e)}")
+        return {}
+
+
+def get_market_data_summary_bulk(session, symbols: List[str]) -> Dict[str, Dict]:
+    """
+    Get comprehensive data summaries for multiple symbols in optimized queries.
+
+    This provides key statistics needed for strategy validation and data
+    completeness checking.
+
+    Args:
+        session: SQLAlchemy session
+        symbols: List of symbols
+
+    Returns:
+        Dictionary mapping symbol -> summary statistics
+    """
+    from sqlalchemy import func
+
+    if not symbols:
+        return {}
+
+    try:
+        # Single query to get all summary stats
+        summary_query = (
+            session.query(
+                MarketData.symbol,
+                func.min(MarketData.date).label("earliest_date"),
+                func.max(MarketData.date).label("latest_date"),
+                func.count(MarketData.id).label("total_records"),
+                func.avg(MarketData.close_price).label("avg_price"),
+                func.min(MarketData.close_price).label("min_price"),
+                func.max(MarketData.close_price).label("max_price"),
+                func.sum(MarketData.volume).label("total_volume"),
+            )
+            .filter(MarketData.symbol.in_(symbols))
+            .group_by(MarketData.symbol)
+            .all()
+        )
+
+        # Build result dictionary
+        result = {}
+        for row in summary_query:
+            result[row.symbol] = {
+                "earliest_date": row.earliest_date,
+                "latest_date": row.latest_date,
+                "total_records": row.total_records,
+                "has_data": True,
+                "avg_price": float(row.avg_price) if row.avg_price else 0,
+                "min_price": float(row.min_price) if row.min_price else 0,
+                "max_price": float(row.max_price) if row.max_price else 0,
+                "total_volume": int(row.total_volume) if row.total_volume else 0,
+                "date_range_days": (
+                    (row.latest_date - row.earliest_date).days
+                    if row.latest_date and row.earliest_date
+                    else 0
+                ),
+            }
+
+        # Add missing symbols with no data
+        for symbol in symbols:
+            if symbol not in result:
+                result[symbol] = {
+                    "earliest_date": None,
+                    "latest_date": None,
+                    "total_records": 0,
+                    "has_data": False,
+                    "avg_price": 0,
+                    "min_price": 0,
+                    "max_price": 0,
+                    "total_volume": 0,
+                    "date_range_days": 0,
+                }
+
+        logger.debug(f"Retrieved market data summaries for {len(symbols)} symbols")
+        return result
+
+    except Exception as e:
+        logger.error(f"Market data summary bulk query failed: {str(e)}")
+        return {}
+
+
+def get_symbol_data_completeness(
+    session, symbols: List[str], start_date, end_date, min_coverage_pct: float = 0.8
+) -> Dict[str, Dict]:
+    """
+    Analyze data completeness for symbols over a date range.
+
+    This helps strategies determine which symbols have sufficient data
+    for reliable analysis.
+
+    Args:
+        session: SQLAlchemy session
+        symbols: List of symbols to analyze
+        start_date: Start date for analysis
+        end_date: End date for analysis
+        min_coverage_pct: Minimum coverage percentage to consider complete
+
+    Returns:
+        Dictionary mapping symbol -> completeness analysis
+    """
+    from datetime import timedelta
+
+    if not symbols:
+        return {}
+
+    try:
+        # Calculate expected trading days (approximate)
+        total_days = (end_date - start_date).days + 1
+        expected_trading_days = int(
+            total_days * (252 / 365)
+        )  # ~252 trading days per year
+        min_required_days = int(expected_trading_days * min_coverage_pct)
+
+        # Query actual data counts for the date range
+        data_counts = (
+            session.query(
+                MarketData.symbol,
+                func.count(MarketData.id).label("actual_days"),
+                func.min(MarketData.date).label("first_date"),
+                func.max(MarketData.date).label("last_date"),
+            )
+            .filter(
+                MarketData.symbol.in_(symbols),
+                MarketData.date >= start_date,
+                MarketData.date <= end_date,
+            )
+            .group_by(MarketData.symbol)
+            .all()
+        )
+
+        result = {}
+
+        # Process symbols with data
+        for row in data_counts:
+            coverage_pct = (
+                (row.actual_days / expected_trading_days) * 100
+                if expected_trading_days > 0
+                else 0
+            )
+
+            result[row.symbol] = {
+                "has_sufficient_data": row.actual_days >= min_required_days,
+                "actual_days": row.actual_days,
+                "expected_days": expected_trading_days,
+                "coverage_percentage": coverage_pct,
+                "min_required_days": min_required_days,
+                "first_available_date": row.first_date,
+                "last_available_date": row.last_date,
+                "date_gaps": row.last_date != end_date or row.first_date != start_date,
+            }
+
+        # Add symbols with no data
+        for symbol in symbols:
+            if symbol not in result:
+                result[symbol] = {
+                    "has_sufficient_data": False,
+                    "actual_days": 0,
+                    "expected_days": expected_trading_days,
+                    "coverage_percentage": 0,
+                    "min_required_days": min_required_days,
+                    "first_available_date": None,
+                    "last_available_date": None,
+                    "date_gaps": True,
+                }
+
+        logger.debug(f"Analyzed data completeness for {len(symbols)} symbols")
+        return result
+
+    except Exception as e:
+        logger.error(f"Data completeness analysis failed: {str(e)}")
+        return {}
+
+
+def optimize_symbol_queries(session, symbols: List[str], batch_size: int = 100):
+    """
+    Pre-warm database connections and optimize query plans for symbol lists.
+
+    This can be called before bulk operations to ensure optimal performance.
+
+    Args:
+        session: SQLAlchemy session
+        symbols: List of symbols that will be queried
+        batch_size: Batch size for optimization
+    """
+    try:
+        # Pre-warm connection with a small test query
+        session.execute("SELECT 1")
+
+        # Batch symbols for large lists to avoid query plan issues
+        batches = [
+            symbols[i : i + batch_size] for i in range(0, len(symbols), batch_size)
+        ]
+
+        for batch in batches:
+            # Execute a minimal query to warm up the query plan
+            session.query(MarketData.symbol).filter(MarketData.symbol.in_(batch)).limit(
+                1
+            ).all()
+
+        logger.debug(
+            f"Optimized query plans for {len(symbols)} symbols in {len(batches)} batches"
+        )
+
+    except Exception as e:
+        logger.warning(f"Query optimization failed (non-critical): {str(e)}")
+
+
+def get_trading_calendar_gaps(
+    session, symbols: List[str], start_date, end_date
+) -> Dict[str, List[Tuple]]:
+    """
+    Identify gaps in trading data that might indicate missing market days.
+
+    Args:
+        session: SQLAlchemy session
+        symbols: List of symbols to analyze
+        start_date: Start date for analysis
+        end_date: End date for analysis
+
+    Returns:
+        Dictionary mapping symbol -> list of (gap_start, gap_end) tuples
+    """
+    from datetime import timedelta
+
+    if not symbols:
+        return {}
+
+    result = {}
+
+    try:
+        for symbol in symbols:
+            # Get all dates for this symbol in the range
+            dates_query = (
+                session.query(MarketData.date)
+                .filter(
+                    MarketData.symbol == symbol,
+                    MarketData.date >= start_date,
+                    MarketData.date <= end_date,
+                )
+                .order_by(MarketData.date)
+                .all()
+            )
+
+            if not dates_query:
+                result[symbol] = [(start_date, end_date)]
+                continue
+
+            actual_dates = [row[0] for row in dates_query]
+            gaps = []
+
+            # Check for gap at the beginning
+            if actual_dates[0] > start_date:
+                gaps.append((start_date, actual_dates[0] - timedelta(days=1)))
+
+            # Check for gaps between consecutive dates
+            for i in range(len(actual_dates) - 1):
+                current_date = actual_dates[i]
+                next_date = actual_dates[i + 1]
+
+                # If gap is more than 3 days (weekends + holiday), it's significant
+                if (next_date - current_date).days > 3:
+                    gaps.append(
+                        (
+                            current_date + timedelta(days=1),
+                            next_date - timedelta(days=1),
+                        )
+                    )
+
+            # Check for gap at the end
+            if actual_dates[-1] < end_date:
+                gaps.append((actual_dates[-1] + timedelta(days=1), end_date))
+
+            result[symbol] = gaps
+
+        # Log summary
+        symbols_with_gaps = len([s for s, gaps in result.items() if gaps])
+        logger.debug(f"Found data gaps in {symbols_with_gaps}/{len(symbols)} symbols")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Trading calendar gap analysis failed: {str(e)}")
+        return {}
+
+
+# === HELPER FUNCTIONS FOR STRATEGY OPTIMIZATION ===
+
+
+def prefetch_strategy_data(
+    session, symbols: List[str], start_date, end_date, warm_cache: bool = True
+) -> Dict[str, any]:
+    """
+    Pre-fetch and cache all data needed for strategy execution.
+
+    This is the main function that strategies should call to ensure
+    optimal performance by loading all required data in advance.
+
+    Args:
+        session: SQLAlchemy session
+        symbols: List of symbols needed
+        start_date: Start date for data
+        end_date: End date for data
+        warm_cache: Whether to warm the application cache
+
+    Returns:
+        Dictionary with prefetch results and statistics
+    """
+    import time
+
+    start_time = time.time()
+
+    try:
+        # Step 1: Optimize database for the query
+        optimize_symbol_queries(session, symbols)
+
+        # Step 2: Get bulk market data
+        market_data = get_bulk_market_data(session, symbols, start_date, end_date)
+
+        # Step 3: Get data completeness analysis
+        completeness = get_symbol_data_completeness(
+            session, symbols, start_date, end_date
+        )
+
+        # Step 4: Get latest data for current prices
+        latest_data = get_latest_market_data_bulk(session, symbols)
+
+        # Step 5: Cache frequently accessed data if requested
+        if warm_cache:
+            for symbol, data_list in market_data.items():
+                if data_list:
+                    cache_key = f"{symbol}_{start_date}_{end_date}"
+                    set_cached_market_data(symbol, start_date, end_date, data_list)
+
+        prefetch_time = time.time() - start_time
+
+        # Compile results
+        results = {
+            "success": True,
+            "symbols_requested": len(symbols),
+            "symbols_with_data": len(market_data),
+            "total_records": sum(len(data) for data in market_data.values()),
+            "symbols_complete": len(
+                [s for s, c in completeness.items() if c["has_sufficient_data"]]
+            ),
+            "prefetch_time": prefetch_time,
+            "market_data": market_data,
+            "completeness": completeness,
+            "latest_data": latest_data,
+        }
+
+        logger.info(
+            f"✅ Prefetched strategy data: {results['symbols_with_data']}/{results['symbols_requested']} symbols, "
+            f"{results['total_records']:,} records in {prefetch_time:.2f}s"
+        )
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Strategy data prefetch failed: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "symbols_requested": len(symbols),
+            "symbols_with_data": 0,
+            "total_records": 0,
+            "prefetch_time": time.time() - start_time,
+        }

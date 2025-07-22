@@ -56,8 +56,10 @@ class TestLoadEnvironment:
 
     def test_load_environment_file_not_found(self):
         """Test loading environment from non-existent file."""
-        success = load_environment("nonexistent.env")
-        assert success is False
+        # Mock open to raise FileNotFoundError
+        with patch("builtins.open", side_effect=FileNotFoundError()):
+            success = load_environment("nonexistent.env")
+            assert success is False
 
     def test_load_environment_with_comments(self):
         """Test loading environment with comments."""
@@ -500,13 +502,15 @@ class TestConfigIntegration:
     def test_config_error_recovery(self):
         """Test configuration error recovery."""
         # Test with missing environment file
-        success = load_environment("nonexistent.env")
-        assert success is False
+        with patch("builtins.open", side_effect=FileNotFoundError()):
+            success = load_environment("nonexistent.env")
+            assert success is False
 
         # System should still work with system environment variables
-        validation = validate_required_env_vars()
-        # Result depends on what's in system environment
-        assert "valid" in validation
+        with patch.dict(os.environ, {"DB_HOST": "localhost", "DB_NAME": "test_db"}):
+            validation = validate_required_env_vars()
+            assert "valid" in validation
+            assert validation["valid"] is True
 
     def test_config_performance(self):
         """Test configuration performance."""

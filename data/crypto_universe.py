@@ -114,13 +114,21 @@ class CryptoUniverse:
                 10,
                 "Cross-border payment protocol",
             ),
+            Cryptocurrency(
+                "MATICUSD",
+                "Polygon",
+                "MATIC/USD",
+                "Layer 2 Scaling",
+                11,
+                "Layer 2 scaling solution for Ethereum",
+            ),
             # Meme Coins and Popular Tokens
             Cryptocurrency(
                 "DOGEUSD",
                 "Dogecoin",
                 "DOGE/USD",
                 "Meme Coin",
-                11,
+                12,
                 "Popular meme cryptocurrency",
             ),
             Cryptocurrency(
@@ -128,7 +136,7 @@ class CryptoUniverse:
                 "Shiba Inu",
                 "SHIB/USD",
                 "Meme Coin",
-                12,
+                13,
                 "Dogecoin-inspired meme token",
             ),
             Cryptocurrency(
@@ -136,7 +144,7 @@ class CryptoUniverse:
                 "Pepe",
                 "PEPE/USD",
                 "Meme Coin",
-                13,
+                14,
                 "Pepe the Frog-inspired meme token",
             ),
             # DeFi Tokens
@@ -145,7 +153,7 @@ class CryptoUniverse:
                 "Aave",
                 "AAVE/USD",
                 "DeFi Protocol",
-                14,
+                15,
                 "Decentralized lending protocol",
             ),
             Cryptocurrency(
@@ -153,7 +161,7 @@ class CryptoUniverse:
                 "Maker",
                 "MKR/USD",
                 "DeFi Protocol",
-                15,
+                16,
                 "Decentralized autonomous organization",
             ),
             Cryptocurrency(
@@ -161,7 +169,7 @@ class CryptoUniverse:
                 "Curve",
                 "CRV/USD",
                 "DeFi Protocol",
-                16,
+                17,
                 "Decentralized exchange for stablecoins",
             ),
             Cryptocurrency(
@@ -169,7 +177,7 @@ class CryptoUniverse:
                 "SushiSwap",
                 "SUSHI/USD",
                 "DeFi Protocol",
-                17,
+                18,
                 "Decentralized exchange protocol",
             ),
             Cryptocurrency(
@@ -177,7 +185,7 @@ class CryptoUniverse:
                 "Yearn Finance",
                 "YFI/USD",
                 "DeFi Protocol",
-                18,
+                19,
                 "Yield farming aggregator",
             ),
             # Utility Tokens
@@ -186,7 +194,7 @@ class CryptoUniverse:
                 "Basic Attention Token",
                 "BAT/USD",
                 "Utility",
-                19,
+                20,
                 "Digital advertising token",
             ),
             Cryptocurrency(
@@ -194,7 +202,7 @@ class CryptoUniverse:
                 "The Graph",
                 "GRT/USD",
                 "Utility",
-                20,
+                21,
                 "Decentralized indexing protocol",
             ),
             Cryptocurrency(
@@ -202,7 +210,7 @@ class CryptoUniverse:
                 "Tezos",
                 "XTZ/USD",
                 "Smart Contract Platform",
-                21,
+                22,
                 "Self-amending blockchain platform",
             ),
             # Stablecoins (for reference, though not typically traded for profit)
@@ -211,7 +219,7 @@ class CryptoUniverse:
                 "USD Coin",
                 "USDC/USD",
                 "Stablecoin",
-                22,
+                23,
                 "USD-backed stablecoin",
                 True,
             ),
@@ -220,7 +228,7 @@ class CryptoUniverse:
                 "Tether",
                 "USDT/USD",
                 "Stablecoin",
-                23,
+                24,
                 "USD-backed stablecoin",
                 True,
             ),
@@ -229,7 +237,7 @@ class CryptoUniverse:
                 "Dai",
                 "DAI/USD",
                 "Stablecoin",
-                24,
+                25,
                 "Decentralized stablecoin",
                 True,
             ),

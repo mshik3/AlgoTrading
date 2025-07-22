@@ -24,24 +24,18 @@ def load_environment(env_file: str = ".env") -> bool:
         env_file: Path to the .env file
 
     Returns:
-        True if environment was loaded successfully
+        True if environment was loaded successfully, False if file not found or error
     """
     global _environment_loaded
 
-    # Check if environment has already been loaded
-    if _environment_loaded:
-        logger.debug("Environment already loaded, skipping")
-        return True
-
-    env_path = Path(env_file)
-    if not env_path.exists():
-        logger.warning(
-            f"Environment file {env_file} not found, using system environment variables only"
-        )
-        _environment_loaded = True
-        return False
-
     try:
+        env_path = Path(env_file)
+        if not env_path.exists():
+            logger.warning(
+                f"Environment file {env_file} not found, using system environment variables only"
+            )
+            return False
+
         with open(env_path, "r") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
@@ -65,17 +59,20 @@ def load_environment(env_file: str = ".env") -> bool:
                 elif value.startswith("'") and value.endswith("'"):
                     value = value[1:-1]
 
-                # Only set if not already in environment (system env takes precedence)
-                if key not in os.environ:
-                    os.environ[key] = value
+                # Set environment variable
+                os.environ[key] = value
 
         _environment_loaded = True
         logger.info(f"Environment variables loaded from {env_file}")
         return True
 
+    except FileNotFoundError:
+        logger.warning(
+            f"Environment file {env_file} not found, using system environment variables only"
+        )
+        return False
     except Exception as e:
         logger.error(f"Failed to load environment file {env_file}: {e}")
-        _environment_loaded = True  # Continue with system env vars
         return False
 
 

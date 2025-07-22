@@ -206,7 +206,7 @@ class TestModernMeanReversionStrategy:
 
     def test_initialization(self):
         """Test strategy initialization."""
-        assert self.strategy.name == "ModernMeanReversion"
+        assert self.strategy.name == "Mean Reversion"
         assert self.strategy.symbols == ["SPY", "QQQ"]
         assert self.strategy.lookback_period == 20
         assert self.strategy.entry_threshold == 2.0
@@ -241,7 +241,7 @@ class TestModernMeanReversionStrategy:
         summary = self.strategy.get_strategy_summary()
 
         assert isinstance(summary, dict)
-        assert summary["name"] == "ModernMeanReversion"
+        assert summary["name"] == "Mean Reversion"
         assert summary["symbols"] == ["SPY", "QQQ"]
         assert summary["strategy_type"] == "modern_mean_reversion"
         assert "enhancements" in summary

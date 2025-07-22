@@ -323,7 +323,7 @@ class ModernMeanReversionStrategy(BaseStrategy):
         self.exit_threshold = exit_threshold
 
         # Initialize base strategy
-        super().__init__(name="ModernMeanReversion", symbols=self.symbols, **kwargs)
+        super().__init__(name="Mean Reversion", symbols=self.symbols, **kwargs)
 
         # Strategy-specific configuration
         self.config.update(
@@ -375,7 +375,7 @@ class ModernMeanReversionStrategy(BaseStrategy):
                             signal_type=SignalType.BUY,
                             confidence=min(0.9, abs(z_score) / self.entry_threshold),
                             price=current_price,
-                            strategy_name=self.name,
+                            strategy_name="Mean Reversion",
                             metadata={
                                 "z_score": z_score,
                                 "mean_price": current_mean,
@@ -393,7 +393,7 @@ class ModernMeanReversionStrategy(BaseStrategy):
                             signal_type=SignalType.SELL,
                             confidence=min(0.9, abs(z_score) / self.entry_threshold),
                             price=current_price,
-                            strategy_name=self.name,
+                            strategy_name="Mean Reversion",
                             metadata={
                                 "z_score": z_score,
                                 "mean_price": current_mean,

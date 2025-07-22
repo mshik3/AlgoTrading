@@ -350,7 +350,7 @@ def create_signals_table(signals, analysis_type):
     Create a table showing detailed signal information with paper trading actions.
 
     Args:
-        signals: List of strategy signals
+        signals: List or Dict of strategy signals
         analysis_type: Type of analysis performed
 
     Returns:
@@ -363,12 +363,16 @@ def create_signals_table(signals, analysis_type):
     signal_cards = []
 
     # Convert signals to table data and create action buttons
-    if analysis_type in ["combined", "all_strategies"]:
-        # Handle combined analysis and all strategies with nested signals
+    if isinstance(signals, dict):
+        # Handle dictionary of signals (combined/all strategies or single strategy)
         for strategy, strategy_signals in signals.items():
             for i, signal in enumerate(strategy_signals):
                 # Handle both object and dictionary formats
-                symbol = signal.symbol if hasattr(signal, 'symbol') else signal.get('symbol', 'UNKNOWN')
+                symbol = (
+                    signal.symbol
+                    if hasattr(signal, "symbol")
+                    else signal.get("symbol", "UNKNOWN")
+                )
                 signal_id = f"{strategy}_{symbol}_{i}"
 
                 # Create signal card with paper trade buttons
@@ -377,15 +381,20 @@ def create_signals_table(signals, analysis_type):
                 )
                 signal_cards.append(signal_card)
     else:
-        # Handle single strategy analysis
+        # Handle list of signals (legacy format - convert to dict format)
+        strategy_name = analysis_type.replace("_", " ").title()
         for i, signal in enumerate(signals):
             # Handle both object and dictionary formats
-            symbol = signal.symbol if hasattr(signal, 'symbol') else signal.get('symbol', 'UNKNOWN')
+            symbol = (
+                signal.symbol
+                if hasattr(signal, "symbol")
+                else signal.get("symbol", "UNKNOWN")
+            )
             signal_id = f"{analysis_type}_{symbol}_{i}"
 
             # Create signal card with paper trade buttons
             signal_card = create_signal_card(
-                signal, signal_id, analysis_type.replace("_", " ").title()
+                signal, signal_id, strategy_name
             )
             signal_cards.append(signal_card)
 
@@ -432,6 +441,7 @@ def create_signal_card(signal, signal_id, strategy_name):
         price = signal.price
         confidence = signal.confidence
         timestamp = signal.timestamp
+        display_strategy = signal.strategy_name or strategy_name
     else:
         # Dictionary signal (after JSON serialization)
         signal_type_value = signal.get("signal_type", "UNKNOWN")
@@ -439,6 +449,7 @@ def create_signal_card(signal, signal_id, strategy_name):
         price = signal.get("price", 0.0)
         confidence = signal.get("confidence", 0.0)
         timestamp = signal.get("timestamp", "")
+        display_strategy = signal.get("strategy_name", strategy_name)
 
     # Determine signal color and icon
     if signal_type_value == "BUY":
@@ -482,7 +493,7 @@ def create_signal_card(signal, signal_id, strategy_name):
                                     html.P(
                                         [
                                             html.Strong("Strategy: "),
-                                            strategy_name,
+                                            display_strategy,
                                             html.Br(),
                                             html.Strong("Price: "),
                                             f"${price:.2f}",
@@ -613,112 +624,140 @@ def create_charts(charts_data, analysis_type):
 
     if analysis_type == "golden_cross":
         if "signal_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["signal_distribution"])
             left_charts.append(
                 dcc.Graph(
-                    figure=charts_data["signal_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
         if "confidence_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["confidence_distribution"])
             right_charts.append(
                 dcc.Graph(
-                    figure=charts_data["confidence_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
 
     elif analysis_type == "mean_reversion":
         if "signal_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["signal_distribution"])
             left_charts.append(
                 dcc.Graph(
-                    figure=charts_data["signal_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
         if "confidence_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["confidence_distribution"])
             right_charts.append(
                 dcc.Graph(
-                    figure=charts_data["confidence_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
 
     elif analysis_type == "combined":
         if "strategy_comparison" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["strategy_comparison"])
             left_charts.append(
                 dcc.Graph(
-                    figure=charts_data["strategy_comparison"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
         if "combined_signal_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["combined_signal_distribution"])
             right_charts.append(
                 dcc.Graph(
-                    figure=charts_data["combined_signal_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
 
     elif analysis_type == "dual_momentum":
         if "signal_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["signal_distribution"])
             left_charts.append(
                 dcc.Graph(
-                    figure=charts_data["signal_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
         if "momentum_scores" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["momentum_scores"])
             right_charts.append(
                 dcc.Graph(
-                    figure=charts_data["momentum_scores"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
 
     elif analysis_type == "sector_rotation":
         if "signal_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["signal_distribution"])
             left_charts.append(
                 dcc.Graph(
-                    figure=charts_data["signal_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
         if "sector_rankings" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["sector_rankings"])
             right_charts.append(
                 dcc.Graph(
-                    figure=charts_data["sector_rankings"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
 
     elif analysis_type == "etf_rotation":
         if "strategy_comparison" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["strategy_comparison"])
             left_charts.append(
                 dcc.Graph(
-                    figure=charts_data["strategy_comparison"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
         if "combined_signal_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["combined_signal_distribution"])
             right_charts.append(
                 dcc.Graph(
-                    figure=charts_data["combined_signal_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
 
     elif analysis_type == "all_strategies":
         if "all_strategies_comparison" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["all_strategies_comparison"])
             left_charts.append(
                 dcc.Graph(
-                    figure=charts_data["all_strategies_comparison"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
         if "all_strategies_signal_distribution" in charts_data:
+            # Convert dict back to Figure object
+            fig = go.Figure(charts_data["all_strategies_signal_distribution"])
             right_charts.append(
                 dcc.Graph(
-                    figure=charts_data["all_strategies_signal_distribution"],
+                    figure=fig,
                     config={"displayModeBar": False},
                 )
             )
@@ -806,24 +845,31 @@ def register_analysis_callbacks(app):
             if button_id == "run-golden-cross-btn":
                 results = analysis_service.run_golden_cross_analysis()
                 analysis_type = "golden_cross"
+                strategy_name = "Golden Cross"
             elif button_id == "run-mean-reversion-btn":
                 results = analysis_service.run_mean_reversion_analysis()
                 analysis_type = "mean_reversion"
+                strategy_name = "Mean Reversion"
             elif button_id == "run-dual-momentum-btn":
                 results = analysis_service.run_dual_momentum_analysis()
                 analysis_type = "dual_momentum"
+                strategy_name = "Dual Momentum"
             elif button_id == "run-sector-rotation-btn":
                 results = analysis_service.run_sector_rotation_analysis()
                 analysis_type = "sector_rotation"
+                strategy_name = "Sector Rotation"
             elif button_id == "run-combined-btn":
                 results = analysis_service.run_combined_analysis()
                 analysis_type = "combined"
+                strategy_name = None  # Combined uses nested signals
             elif button_id == "run-etf-rotation-btn":
                 results = analysis_service.run_etf_rotation_analysis()
                 analysis_type = "etf_rotation"
+                strategy_name = None  # ETF rotation uses nested signals
             elif button_id == "run-all-strategies-btn":
                 results = analysis_service.run_all_strategies_analysis()
                 analysis_type = "all_strategies"
+                strategy_name = None  # All strategies uses nested signals
             else:
                 return "", "", "", ""
 
@@ -833,9 +879,12 @@ def register_analysis_callbacks(app):
 
                 # Convert signals to serializable format
                 serialized_results = results.copy()
-                if "signals" in results:
-                    serialized_results["signals"] = [
-                        {
+
+                def serialize_signal(signal, override_strategy_name=None):
+                    """Helper to serialize a single signal object."""
+                    if hasattr(signal, "signal_type"):
+                        # Signal is a StrategySignal object
+                        return {
                             "symbol": signal.symbol,
                             "signal_type": signal.signal_type.value,
                             "confidence": signal.confidence,
@@ -848,11 +897,52 @@ def register_analysis_callbacks(app):
                                 if signal.timestamp
                                 else None
                             ),
-                            "strategy_name": signal.strategy_name,
+                            "strategy_name": override_strategy_name
+                            or signal.strategy_name
+                            or "Unknown Strategy",
                             "metadata": signal.metadata or {},
                         }
-                        for signal in results["signals"]
-                    ]
+                    else:
+                        # Signal is already a dictionary
+                        signal_copy = signal.copy()
+                        if override_strategy_name:
+                            signal_copy["strategy_name"] = override_strategy_name
+                        return signal_copy
+
+                if "signals" in results:
+                    if isinstance(results["signals"], dict):
+                        # Handle nested signals (combined/all strategies)
+                        serialized_results["signals"] = {
+                            strategy: [
+                                serialize_signal(s, strategy.replace("_", " ").title())
+                                for s in signals
+                            ]
+                            for strategy, signals in results["signals"].items()
+                        }
+                    else:
+                        # Handle flat list of signals (single strategy)
+                        serialized_results["signals"] = [
+                            serialize_signal(s, strategy_name)
+                            for s in results["signals"]
+                        ]
+                else:
+                    # Ensure signals exist even if empty
+                    serialized_results["signals"] = []
+
+                # Ensure summary exists with default values if not present
+                if "summary" not in serialized_results:
+                    serialized_results["summary"] = {
+                        "total_signals": 0,
+                        "buy_signals": 0,
+                        "sell_signals": 0,
+                        "high_confidence_signals": 0,
+                        "avg_confidence": 0,
+                        "symbols_with_signals": 0,
+                    }
+
+                # Ensure charts exist with empty values if not present
+                if "charts" not in serialized_results:
+                    serialized_results["charts"] = {}
 
                 results_json = json.dumps(serialized_results, default=str)
                 return "", results_json, analysis_type, ""
@@ -887,6 +977,25 @@ def register_analysis_callbacks(app):
 
             # Show results section
             style = {"display": "block"}
+
+            # Ensure required data exists with defaults
+            if "summary" not in results:
+                results["summary"] = {
+                    "total_signals": 0,
+                    "buy_signals": 0,
+                    "sell_signals": 0,
+                    "high_confidence_signals": 0,
+                    "avg_confidence": 0,
+                    "symbols_with_signals": 0,
+                }
+
+            if "signals" not in results:
+                results["signals"] = (
+                    [] if analysis_type not in ["combined", "all_strategies"] else {}
+                )
+
+            if "charts" not in results:
+                results["charts"] = {}
 
             # Create summary cards
             summary_cards = create_summary_cards(results["summary"], analysis_type)

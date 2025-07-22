@@ -72,8 +72,14 @@ class DashboardAnalysisService:
             self.use_mock_data = True
 
     def setup_data_collector(self):
-        """Initialize the data collector."""
+        """Initialize the database-based data provider for instant strategy execution."""
         try:
+            # Use new DatabaseMarketDataProvider for instant data access
+            from dashboard.services.market_data_provider import get_market_data_provider
+
+            self.data_provider = get_market_data_provider()
+
+            # Also keep Alpaca collector as fallback for fresh data needs
             if not self.use_mock_data:
                 alpaca_key = get_env_var("ALPACA_API_KEY", required=True)
                 alpaca_secret = get_env_var("ALPACA_SECRET_KEY", required=True)
@@ -82,13 +88,14 @@ class DashboardAnalysisService:
                     api_key=alpaca_key, secret_key=alpaca_secret, paper=True
                 )
                 self.data_collector = AlpacaDataCollector(config)
-                logger.info("✓ Alpaca data collector initialized")
+                logger.info("✓ Database data provider + Alpaca fallback initialized")
             else:
                 self.data_collector = None
-                logger.info("✓ Using mock data mode")
+                logger.info("✓ Database data provider initialized (mock mode)")
 
         except Exception as e:
-            logger.error(f"Data collector setup failed: {e}")
+            logger.error(f"Data provider setup failed: {e}")
+            self.data_provider = None
             self.data_collector = None
             self.use_mock_data = True
 
@@ -136,7 +143,7 @@ class DashboardAnalysisService:
 
     def fetch_market_data(self, strategy=None) -> Dict[str, pd.DataFrame]:
         """
-        Fetch market data for all symbols with retry logic.
+        Fetch market data from pre-loaded database for instant strategy execution.
 
         Args:
             strategy: Optional strategy instance to get minimum data requirements
@@ -144,122 +151,129 @@ class DashboardAnalysisService:
         Returns:
             Dictionary mapping symbol -> OHLCV DataFrame
         """
+        import time
+
         # Get minimum data requirements from strategy if provided
         min_days_required = 200  # Default requirement
         if strategy and hasattr(strategy, "get_minimum_data_requirements"):
             min_days_required = strategy.get_minimum_data_requirements()
-            logger.info(
+            logger.debug(
                 f"Using strategy-specific data requirement: {min_days_required} days"
             )
-        elif strategy and hasattr(strategy, "config") and "min_data_days" in strategy.config:
+        elif (
+            strategy
+            and hasattr(strategy, "config")
+            and "min_data_days" in strategy.config
+        ):
             min_days_required = strategy.config["min_data_days"]
-            logger.info(
+            logger.debug(
                 f"Using strategy config data requirement: {min_days_required} days"
             )
 
-        logger.info(
-            f"Fetching market data for {len(self.symbols)} symbols (min {min_days_required} days)..."
-        )
-        logger.info(
-            f"Note: Symbols with insufficient historical data will be skipped gracefully"
-        )
+        logger.info(f"🚀 Fetching pre-loaded data for {len(self.symbols)} symbols...")
+
+        start_time = time.time()
+
+        try:
+            if hasattr(self, "data_provider") and self.data_provider:
+                # Use database provider for instant data access
+                market_data = self.data_provider.get_market_data(
+                    symbols=self.symbols,
+                    period="2y",  # 2 years of data for comprehensive analysis
+                    validate_completeness=True,
+                )
+
+                # Filter data based on minimum requirements
+                valid_data = {}
+                skipped_symbols = 0
+
+                for symbol, data in market_data.items():
+                    if len(data) >= min_days_required:
+                        valid_data[symbol] = data
+                    else:
+                        logger.debug(
+                            f"⚠️ {symbol}: Only {len(data)} days (need {min_days_required}+)"
+                        )
+                        skipped_symbols += 1
+
+                fetch_time = time.time() - start_time
+
+                logger.info(
+                    f"✅ Database fetch complete: {len(valid_data)}/{len(self.symbols)} symbols "
+                    f"in {fetch_time:.2f}s ({skipped_symbols} skipped)"
+                )
+
+                # Log performance improvement
+                estimated_api_time = (
+                    len(self.symbols) * 2
+                )  # ~2 seconds per symbol via API
+                time_saved = estimated_api_time - fetch_time
+                if time_saved > 0:
+                    logger.info(
+                        f"⚡ Performance: {time_saved:.0f}s saved vs API calls "
+                        f"({fetch_time:.2f}s vs ~{estimated_api_time:.0f}s)"
+                    )
+
+                return valid_data
+
+            else:
+                logger.warning(
+                    "Database data provider not available, falling back to API"
+                )
+                return self._fallback_api_fetch(min_days_required)
+
+        except Exception as e:
+            logger.error(f"Database fetch failed: {str(e)}")
+            logger.info("Attempting fallback to API data collection...")
+            return self._fallback_api_fetch(min_days_required)
+
+    def _fallback_api_fetch(self, min_days_required: int) -> Dict[str, pd.DataFrame]:
+        """
+        Fallback method to fetch data via API if database provider fails.
+
+        Args:
+            min_days_required: Minimum number of days required
+
+        Returns:
+            Dictionary mapping symbol -> OHLCV DataFrame
+        """
+        logger.warning("Using fallback API data collection (this will be slower)")
+
+        if not hasattr(self, "data_collector") or not self.data_collector:
+            logger.error("No data collector available for fallback")
+            return {}
 
         market_data = {}
         successful_fetches = 0
-        max_retries = 3
 
-        skipped_symbols = 0
-        for symbol in self.symbols:
-            retry_count = 0
-            data = None
-            should_skip = False
+        # Use batch processing for better API efficiency
+        try:
+            from data.storage import get_session
 
-            while retry_count < max_retries and data is None and not should_skip:
-                try:
-                    if self.data_collector:
-                        # Validate symbol availability first
-                        if not self.data_collector.validate_symbol_availability(symbol):
-                            logger.warning(
-                                f"Skipping {symbol} - not available in Alpaca API"
-                            )
-                            should_skip = True
-                            break
+            # Use incremental fetch batch method if available
+            session = get_session()
+            batch_results = self.data_collector.incremental_fetch_batch(
+                session=session, symbols=self.symbols, period="2y", batch_size=10
+            )
+            session.close()
 
-                        # Use incremental data loading for better performance
-                        try:
-                            # Try to get database session for incremental loading
-                            from data.storage import get_session
-                            session = get_session()
-                            
-                            # Use incremental fetch if session is available
-                            data = self.data_collector.incremental_fetch_daily_data(
-                                session=session,
-                                symbol=symbol,
-                                period="2y"
-                            )
-                            session.close()
-                        except Exception as session_error:
-                            logger.warning(f"Could not use incremental loading for {symbol}: {session_error}")
-                            # Fallback to regular fetch
-                            data = self.data_collector.fetch_daily_data(symbol, period="2y")
-                    else:
-                        raise Exception("Alpaca data collector not available")
+            # Filter and validate results
+            for symbol, data in batch_results.items():
+                if (
+                    data is not None
+                    and not data.empty
+                    and len(data) >= min_days_required
+                ):
+                    market_data[symbol] = data
+                    successful_fetches += 1
 
-                    if (
-                        data is not None
-                        and not data.empty
-                        and len(data) >= min_days_required
-                    ):
-                        market_data[symbol] = data
-                        successful_fetches += 1
-                        logger.info(f"✓ {symbol}: {len(data)} days of data")
-                        break
-                    else:
-                        if data is None:
-                            logger.warning(
-                                f"✗ No data returned for {symbol} (attempt {retry_count + 1})"
-                            )
-                            # This is retryable - API might be temporarily unavailable
-                        elif data.empty:
-                            logger.warning(
-                                f"✗ Empty data for {symbol} (attempt {retry_count + 1})"
-                            )
-                            # This is retryable - API might be temporarily unavailable
-                        else:
-                            # Insufficient data is NOT retryable - symbol simply doesn't have enough history
-                            logger.warning(
-                                f"✗ Skipping {symbol} - insufficient data: {len(data)} days (need >= {min_days_required})"
-                            )
-                            should_skip = True
-                            skipped_symbols += 1
-                            break
-                        data = None  # Reset for retry
+            logger.info(
+                f"✓ Fallback API fetch complete: {successful_fetches}/{len(self.symbols)} symbols"
+            )
 
-                except Exception as e:
-                    retry_count += 1
-                    error_msg = str(e).lower()
-                    
-                    # Check if this is a non-retryable error (like symbol not found)
-                    if any(keyword in error_msg for keyword in ['not found', 'symbol not available', 'invalid symbol']):
-                        logger.warning(f"Skipping {symbol} - symbol not available: {e}")
-                        should_skip = True
-                        skipped_symbols += 1
-                        break
-                    elif retry_count < max_retries:
-                        logger.warning(
-                            f"Error fetching data for {symbol} (attempt {retry_count}): {e}. Retrying..."
-                        )
-                        import time
+        except Exception as e:
+            logger.error(f"Fallback API fetch failed: {str(e)}")
 
-                        time.sleep(1)  # Brief delay before retry
-                    else:
-                        logger.error(
-                            f"Error fetching data for {symbol} after {max_retries} attempts: {e}"
-                        )
-
-        logger.info(
-            f"Data fetch complete: {successful_fetches} successful, {skipped_symbols} skipped due to insufficient data, {len(self.symbols) - successful_fetches - skipped_symbols} failed"
-        )
         return market_data
 
     def run_golden_cross_analysis(self) -> Dict:
@@ -637,41 +651,6 @@ class DashboardAnalysisService:
                 "charts": {},
             }
 
-    def _process_golden_cross_results(
-        self, signals: List[StrategySignal], market_data: Dict[str, pd.DataFrame]
-    ) -> Dict:
-        """Process Golden Cross strategy results."""
-        # Categorize signals
-        buy_signals = [s for s in signals if s.signal_type == SignalType.BUY]
-        sell_signals = [
-            s
-            for s in signals
-            if s.signal_type in [SignalType.SELL, SignalType.CLOSE_LONG]
-        ]
-
-        # Create summary
-        summary = {
-            "total_signals": len(signals),
-            "buy_signals": len(buy_signals),
-            "sell_signals": len(sell_signals),
-            "high_confidence_signals": len([s for s in signals if s.confidence >= 0.8]),
-            "avg_confidence": (
-                sum(s.confidence for s in signals) / len(signals) if signals else 0
-            ),
-            "symbols_with_signals": len(set(s.symbol for s in signals)),
-            "timestamp": datetime.now(),
-        }
-
-        # Create charts
-        charts = self._create_golden_cross_charts(signals, market_data)
-
-        return {
-            "success": True,
-            "signals": signals,
-            "summary": summary,
-            "charts": charts,
-        }
-
     def _process_mean_reversion_results(
         self, signals: List[StrategySignal], market_data: Dict[str, pd.DataFrame]
     ) -> Dict:
@@ -702,7 +681,42 @@ class DashboardAnalysisService:
 
         return {
             "success": True,
-            "signals": signals,
+            "signals": {"mean_reversion": signals},
+            "summary": summary,
+            "charts": charts,
+        }
+
+    def _process_golden_cross_results(
+        self, signals: List[StrategySignal], market_data: Dict[str, pd.DataFrame]
+    ) -> Dict:
+        """Process Golden Cross strategy results."""
+        # Categorize signals
+        buy_signals = [s for s in signals if s.signal_type == SignalType.BUY]
+        sell_signals = [
+            s
+            for s in signals
+            if s.signal_type in [SignalType.SELL, SignalType.CLOSE_LONG]
+        ]
+
+        # Create summary
+        summary = {
+            "total_signals": len(signals),
+            "buy_signals": len(buy_signals),
+            "sell_signals": len(sell_signals),
+            "high_confidence_signals": len([s for s in signals if s.confidence >= 0.8]),
+            "avg_confidence": (
+                sum(s.confidence for s in signals) / len(signals) if signals else 0
+            ),
+            "symbols_with_signals": len(set(s.symbol for s in signals)),
+            "timestamp": datetime.now(),
+        }
+
+        # Create charts
+        charts = self._create_golden_cross_charts(signals, market_data)
+
+        return {
+            "success": True,
+            "signals": {"golden_cross": signals},
             "summary": summary,
             "charts": charts,
         }
@@ -1016,7 +1030,9 @@ class DashboardAnalysisService:
             color_discrete_sequence=px.colors.qualitative.Set3,
         )
         fig.update_layout(height=300)
-        charts["signal_distribution"] = fig
+        charts["signal_distribution"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         # Momentum scores chart
         absolute_scores = strategy_summary.get("absolute_momentum_scores", {})
@@ -1053,7 +1069,9 @@ class DashboardAnalysisService:
                 barmode="group",
                 height=400,
             )
-            charts["momentum_scores"] = fig
+            charts["momentum_scores"] = (
+                fig.to_dict()
+            )  # Convert to dict for serialization
 
         return charts
 
@@ -1080,7 +1098,9 @@ class DashboardAnalysisService:
             color_discrete_sequence=px.colors.qualitative.Set2,
         )
         fig.update_layout(height=300)
-        charts["signal_distribution"] = fig
+        charts["signal_distribution"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         # Sector rankings chart
         sector_rankings = strategy_summary.get("sector_rankings", {})
@@ -1104,7 +1124,9 @@ class DashboardAnalysisService:
                 height=400,
                 xaxis_tickangle=-45,
             )
-            charts["sector_rankings"] = fig
+            charts["sector_rankings"] = (
+                fig.to_dict()
+            )  # Convert to dict for serialization
 
         return charts
 
@@ -1133,7 +1155,9 @@ class DashboardAnalysisService:
         fig.update_layout(
             xaxis_title="Strategy", yaxis_title="Number of Signals", height=300
         )
-        charts["strategy_comparison"] = fig
+        charts["strategy_comparison"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         # Combined signal distribution
         all_signals = dual_momentum_signals + sector_rotation_signals
@@ -1148,7 +1172,9 @@ class DashboardAnalysisService:
                 color_discrete_sequence=px.colors.qualitative.Pastel,
             )
             fig.update_layout(height=300)
-            charts["combined_signal_distribution"] = fig
+            charts["combined_signal_distribution"] = (
+                fig.to_dict()
+            )  # Convert to dict for serialization
 
         return charts
 
@@ -1190,7 +1216,9 @@ class DashboardAnalysisService:
             height=400,
             xaxis_tickangle=-45,
         )
-        charts["all_strategies_comparison"] = fig
+        charts["all_strategies_comparison"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         # Combined signal distribution
         all_signals = (
@@ -1210,7 +1238,9 @@ class DashboardAnalysisService:
                 color_discrete_sequence=px.colors.qualitative.Set1,
             )
             fig.update_layout(height=300)
-            charts["all_strategies_signal_distribution"] = fig
+            charts["all_strategies_signal_distribution"] = (
+                fig.to_dict()
+            )  # Convert to dict for serialization
 
         return charts
 
@@ -1237,7 +1267,9 @@ class DashboardAnalysisService:
                 "CLOSE_LONG": "#ff6600",
             },
         )
-        charts["signal_distribution"] = fig
+        charts["signal_distribution"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         # Confidence distribution chart
         confidences = [s.confidence for s in signals]
@@ -1247,7 +1279,9 @@ class DashboardAnalysisService:
             nbins=10,
             labels={"x": "Confidence", "y": "Count"},
         )
-        charts["confidence_distribution"] = fig
+        charts["confidence_distribution"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         return charts
 
@@ -1274,7 +1308,9 @@ class DashboardAnalysisService:
                 "CLOSE_LONG": "#ff6600",
             },
         )
-        charts["signal_distribution"] = fig
+        charts["signal_distribution"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         # Confidence distribution chart
         confidences = [s.confidence for s in signals]
@@ -1284,7 +1320,9 @@ class DashboardAnalysisService:
             nbins=10,
             labels={"x": "Confidence", "y": "Count"},
         )
-        charts["confidence_distribution"] = fig
+        charts["confidence_distribution"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         return charts
 
@@ -1320,7 +1358,9 @@ class DashboardAnalysisService:
             title="Strategy Comparison",
             barmode="group",
         )
-        charts["strategy_comparison"] = fig
+        charts["strategy_comparison"] = (
+            fig.to_dict()
+        )  # Convert to dict for serialization
 
         # Combined signal distribution
         all_signals = golden_signals + mean_rev_signals
@@ -1338,7 +1378,9 @@ class DashboardAnalysisService:
                     "CLOSE_LONG": "#ff6600",
                 },
             )
-            charts["combined_signal_distribution"] = fig
+            charts["combined_signal_distribution"] = (
+                fig.to_dict()
+            )  # Convert to dict for serialization
 
         return charts
 
