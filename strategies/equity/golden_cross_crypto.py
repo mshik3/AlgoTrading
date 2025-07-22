@@ -1,15 +1,16 @@
 """
-Golden Cross Strategy Implementation.
+Crypto-Optimized Golden Cross Strategy Implementation.
 
-This strategy implements the classic trend-following approach that buys when
-the 50-day moving average crosses above the 200-day moving average (Golden Cross)
-and sells when it crosses below (Death Cross).
+This strategy implements a Golden Cross approach specifically optimized for cryptocurrencies
+that have limited historical data. It uses shorter moving averages (20/50 instead of 50/200)
+to work with newer crypto coins that may only have 100-200 days of data.
 
-Key Components:
-- 50-day and 200-day Simple Moving Average tracking
-- Crossover detection for entry/exit signals
-- Focus on broad market ETFs for reliable trend following
-- Long-term trend following with minimal trades per year
+Key Features:
+- 20-day and 50-day Simple Moving Average tracking (vs 50/200 for traditional)
+- Faster signal generation for crypto volatility
+- Optimized for crypto trading patterns
+- Works with newer cryptocurrencies (PEPE, SHIB, etc.)
+- Reduced data requirements (100+ days vs 220+ days)
 """
 
 import pandas as pd
@@ -24,55 +25,87 @@ from indicators import TechnicalIndicators
 logger = logging.getLogger(__name__)
 
 
-class GoldenCrossStrategy(BaseStrategy):
+class CryptoGoldenCrossStrategy(BaseStrategy):
     """
-    Golden Cross Strategy for equity trading.
+    Crypto-Optimized Golden Cross Strategy.
 
     Strategy Logic:
-    - Buy when 50-day SMA crosses above 200-day SMA (Golden Cross)
-    - Sell when 50-day SMA crosses below 200-day SMA (Death Cross)
-    - Focus on broad market ETFs (SPY, QQQ, VTI) for reliable trends
-    - Typically generates 2-4 trades per year
-    - Captures major bull runs while avoiding bear markets
+    - Buy when 20-day SMA crosses above 50-day SMA (Golden Cross)
+    - Sell when 20-day SMA crosses below 50-day SMA (Death Cross)
+    - Optimized for crypto volatility and shorter timeframes
+    - Works with newer cryptocurrencies that have limited historical data
+    - Faster signal generation than traditional Golden Cross
     """
 
     def __init__(self, symbols: List[str] = None, **config):
         """
-        Initialize Golden Cross Strategy.
+        Initialize Crypto Golden Cross Strategy.
 
         Args:
-            symbols: List of symbols to trade (defaults to strategy-optimized universe)
+            symbols: List of symbols to trade (defaults to crypto universe)
             **config: Strategy configuration parameters
         """
-        # Use new asset universe system - will automatically get optimized symbols
-        # for golden cross strategy (top 100 Fortune 500 + top 50 US ETFs + top 10 crypto)
-        super().__init__(name="Golden Cross", symbols=symbols, **config)
+        # Use crypto symbols if none provided
+        if symbols is None:
+            from data.crypto_universe import CryptoUniverse
 
-        # Default configuration for Golden Cross
+            crypto_universe = CryptoUniverse()
+            symbols = [
+                crypto.symbol for crypto in crypto_universe.cryptocurrencies
+            ]
+
+        # Default configuration for Crypto Golden Cross
         default_config = {
-            "fast_ma_period": 50,  # Fast moving average period
-            "slow_ma_period": 200,  # Slow moving average period
-            "min_trend_strength": 0.02,  # Minimum 2% separation between MAs
+            "fast_ma_period": 20,  # Fast moving average period (vs 50 for traditional)
+            "slow_ma_period": 50,  # Slow moving average period (vs 200 for traditional)
+            "min_trend_strength": 0.01,  # Minimum 1% separation between MAs (vs 2% for traditional)
             "volume_confirmation": True,  # Require volume confirmation
-            "volume_multiplier": 1.1,  # Volume should be 1.1x average
-            "max_position_size": 0.30,  # 30% max per ETF position
-            "min_days_between_signals": 5,  # Minimum days between signals
-            "trend_confirmation_days": 3,  # Days to confirm trend before entry
-            "take_profit_pct": None,  # No take profit - ride the trend
-            "stop_loss_pct": None,  # No stop loss - trust the crossover
-            "min_confidence": 0.7,  # Confidence threshold
+            "volume_multiplier": 1.05,  # Volume should be 1.05x average (vs 1.1x for traditional)
+            "max_position_size": 0.25,  # 25% max per crypto position (vs 30% for traditional)
+            "min_days_between_signals": 3,  # Minimum days between signals (vs 5 for traditional)
+            "trend_confirmation_days": 2,  # Days to confirm trend before entry (vs 3 for traditional)
+            "take_profit_pct": 0.20,  # 20% take profit target (vs None for traditional)
+            "stop_loss_pct": 0.10,  # 10% stop loss (vs None for traditional)
+            "min_confidence": 0.6,  # Lower confidence threshold for crypto (vs 0.7 for traditional)
         }
 
         # Merge default config with provided config
         merged_config = {**default_config, **config}
 
-        super().__init__(name="Golden Cross", symbols=symbols, **merged_config)
+        super().__init__(name="Crypto Golden Cross", symbols=symbols, **merged_config)
 
         # Track last signal dates to avoid whipsaws
         self.last_signal_dates = {}
 
         # Track crossover states to detect changes
         self.crossover_states = {}  # symbol -> 'golden' or 'death' or 'none'
+
+    def get_minimum_data_requirements(self) -> int:
+        """
+        Get minimum number of days of data required for Crypto Golden Cross strategy.
+
+        Returns:
+            Minimum number of days required (100 for 50-day MA + buffer)
+        """
+        return 100
+
+    def get_strategy_type(self) -> str:
+        """
+        Get the strategy type for categorization.
+
+        Returns:
+            Strategy type string
+        """
+        return "crypto_golden_cross"
+
+    def is_crypto_strategy(self) -> bool:
+        """
+        Check if this strategy is optimized for crypto trading.
+
+        Returns:
+            True (this is a crypto-optimized strategy)
+        """
+        return True
 
     def generate_signals(
         self, market_data: Dict[str, pd.DataFrame]
@@ -113,34 +146,14 @@ class GoldenCrossStrategy(BaseStrategy):
 
         return signals
 
-    @property
-    def fast_ma_period(self):
-        """Get fast moving average period."""
-        return self.config["fast_ma_period"]
-
-    @property
-    def slow_ma_period(self):
-        """Get slow moving average period."""
-        return self.config["slow_ma_period"]
-
-    @property
-    def min_trend_strength(self):
-        """Get minimum trend strength threshold."""
-        return self.config["min_trend_strength"]
-
-    @property
-    def max_position_size(self):
-        """Get maximum position size."""
-        return self.config["max_position_size"]
-
     def should_enter_position(
         self, symbol: str, data: pd.DataFrame
     ) -> Optional[StrategySignal]:
         """
-        Determine if we should enter a position based on Golden Cross.
+        Determine if we should enter a position based on Crypto Golden Cross.
 
         Args:
-            symbol: ETF symbol
+            symbol: Crypto symbol
             data: OHLCV data
 
         Returns:
@@ -150,10 +163,10 @@ class GoldenCrossStrategy(BaseStrategy):
         if symbol in self.positions:
             return None
 
-        # Need at least 220 days of data for 200-day MA + buffer
-        if len(data) < 220:
+        # Need at least 70 days of data for 50-day MA + buffer
+        if len(data) < 70:
             logger.debug(
-                f"{symbol}: Insufficient data for Golden Cross (need 220+ days)"
+                f"{symbol}: Insufficient data for Crypto Golden Cross (need 70+ days)"
             )
             return None
 
@@ -193,7 +206,7 @@ class GoldenCrossStrategy(BaseStrategy):
                 if days_since_last < self.config["min_days_between_signals"]:
                     return None
 
-            # Detect Golden Cross (50-day MA crosses above 200-day MA)
+            # Detect Golden Cross (20-day MA crosses above 50-day MA)
             golden_cross_detected = self._detect_golden_cross(
                 recent, fast_ma_col, slow_ma_col
             )
@@ -207,7 +220,7 @@ class GoldenCrossStrategy(BaseStrategy):
 
             # 1. Golden Cross detected
             conditions_met.append("GOLDEN_CROSS")
-            confidence_factors.append(0.5)
+            confidence_factors.append(0.4)
 
             # 2. Trend strength - MAs should be reasonably separated
             ma_separation = abs(fast_ma_current - slow_ma_current) / slow_ma_current
@@ -229,7 +242,7 @@ class GoldenCrossStrategy(BaseStrategy):
                     and volume > volume_sma * self.config["volume_multiplier"]
                 ):
                     conditions_met.append("VOLUME_CONFIRMATION")
-                    confidence_factors.append(0.1)
+                    confidence_factors.append(0.2)
 
             # Calculate confidence
             confidence = min(sum(confidence_factors), 1.0)
@@ -240,33 +253,48 @@ class GoldenCrossStrategy(BaseStrategy):
                 self.last_signal_dates[symbol] = datetime.now()
                 self.crossover_states[symbol] = "golden"
 
+                # Calculate stop loss and take profit
+                stop_loss = (
+                    close_price * (1 - self.config["stop_loss_pct"])
+                    if self.config["stop_loss_pct"]
+                    else None
+                )
+                take_profit = (
+                    close_price * (1 + self.config["take_profit_pct"])
+                    if self.config["take_profit_pct"]
+                    else None
+                )
+
                 # Create signal
                 signal = StrategySignal(
                     symbol=symbol,
                     signal_type=SignalType.BUY,
                     confidence=confidence,
                     price=close_price,
-                    stop_loss=None,  # Golden Cross trusts the crossover
-                    take_profit=None,  # Ride the trend
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
                     strategy_name=self.name,
                     metadata={
                         "conditions_met": conditions_met,
                         "fast_ma": fast_ma_current,
                         "slow_ma": slow_ma_current,
                         "ma_separation_pct": ma_separation * 100,
-                        "entry_reason": "golden_cross_bullish",
+                        "entry_reason": "crypto_golden_cross_bullish",
                         "crossover_type": "golden",
+                        "strategy_type": "crypto_optimized",
                     },
                 )
 
                 logger.info(
-                    f"Golden Cross BUY signal for {symbol}: confidence={confidence:.3f}, "
-                    f"50MA={fast_ma_current:.2f}, 200MA={slow_ma_current:.2f}"
+                    f"Crypto Golden Cross BUY signal for {symbol}: confidence={confidence:.3f}, "
+                    f"20MA={fast_ma_current:.2f}, 50MA={slow_ma_current:.2f}"
                 )
                 return signal
 
         except Exception as e:
-            logger.error(f"Error analyzing Golden Cross entry for {symbol}: {str(e)}")
+            logger.error(
+                f"Error analyzing Crypto Golden Cross entry for {symbol}: {str(e)}"
+            )
             return None
 
         return None
@@ -278,7 +306,7 @@ class GoldenCrossStrategy(BaseStrategy):
         Determine if we should exit existing position based on Death Cross.
 
         Args:
-            symbol: ETF symbol
+            symbol: Crypto symbol
             data: OHLCV data
 
         Returns:
@@ -303,70 +331,44 @@ class GoldenCrossStrategy(BaseStrategy):
             fast_ma_col = f"SMA_{self.config['fast_ma_period']}"
             slow_ma_col = f"SMA_{self.config['slow_ma_period']}"
 
-            # Detect Death Cross (50-day MA crosses below 200-day MA)
+            # Detect Death Cross (20-day MA crosses below 50-day MA)
             death_cross_detected = self._detect_death_cross(
                 recent, fast_ma_col, slow_ma_col
             )
 
             if death_cross_detected:
-                # Check if we recently sent a signal to avoid whipsaws
-                if symbol in self.last_signal_dates:
-                    days_since_last = (
-                        datetime.now() - self.last_signal_dates[symbol]
-                    ).days
-                    if days_since_last < self.config["min_days_between_signals"]:
-                        return None
-
                 # Update tracking
-                self.last_signal_dates[symbol] = datetime.now()
                 self.crossover_states[symbol] = "death"
-
-                # Calculate P&L
-                position = self.positions[symbol]
-                entry_price = position["entry_price"]
-                profit_loss_pct = (current_price - entry_price) / entry_price * 100
 
                 signal = StrategySignal(
                     symbol=symbol,
-                    signal_type=SignalType.CLOSE_LONG,
-                    confidence=0.9,  # High confidence for death cross
+                    signal_type=SignalType.SELL,
+                    confidence=0.8,
                     price=current_price,
                     strategy_name=self.name,
                     metadata={
-                        "exit_reason": "death_cross_bearish",
-                        "entry_price": entry_price,
-                        "profit_loss_pct": profit_loss_pct,
-                        "fast_ma": latest[fast_ma_col],
-                        "slow_ma": latest[slow_ma_col],
+                        "exit_reason": "crypto_death_cross_bearish",
                         "crossover_type": "death",
+                        "strategy_type": "crypto_optimized",
                     },
                 )
 
-                logger.info(
-                    f"Death Cross SELL signal for {symbol}: P&L={profit_loss_pct:.2f}%, "
-                    f"50MA={latest[fast_ma_col]:.2f}, 200MA={latest[slow_ma_col]:.2f}"
-                )
+                logger.info(f"Crypto Death Cross SELL signal for {symbol}")
                 return signal
 
         except Exception as e:
-            logger.error(f"Error analyzing Golden Cross exit for {symbol}: {str(e)}")
+            logger.error(
+                f"Error analyzing Crypto Death Cross exit for {symbol}: {str(e)}"
+            )
+            return None
 
         return None
-
-    def get_minimum_data_requirements(self) -> int:
-        """
-        Get minimum number of days of data required for Golden Cross strategy.
-
-        Returns:
-            Minimum number of days required (220 for 200-day MA + buffer)
-        """
-        return 220
 
     def _detect_golden_cross(
         self, recent_data: pd.DataFrame, fast_ma_col: str, slow_ma_col: str
     ) -> bool:
         """
-        Detect if a Golden Cross (50 MA crossing above 200 MA) occurred recently.
+        Detect if a Golden Cross (20 MA crossing above 50 MA) occurred recently.
 
         Args:
             recent_data: Recent price data with MAs
@@ -404,21 +406,21 @@ class GoldenCrossStrategy(BaseStrategy):
                 # Golden Cross: fast MA crosses from below to above slow MA
                 if prev_fast <= prev_slow and current_fast > current_slow:
                     logger.debug(
-                        f"Golden Cross detected: {prev_fast:.2f} <= {prev_slow:.2f} -> {current_fast:.2f} > {current_slow:.2f}"
+                        f"Crypto Golden Cross detected: {prev_fast:.2f} <= {prev_slow:.2f} -> {current_fast:.2f} > {current_slow:.2f}"
                     )
                     return True
 
             return False
 
         except Exception as e:
-            logger.error(f"Error detecting Golden Cross: {str(e)}")
+            logger.error(f"Error detecting Crypto Golden Cross: {str(e)}")
             return False
 
     def _detect_death_cross(
         self, recent_data: pd.DataFrame, fast_ma_col: str, slow_ma_col: str
     ) -> bool:
         """
-        Detect if a Death Cross (50 MA crossing below 200 MA) occurred recently.
+        Detect if a Death Cross (20 MA crossing below 50 MA) occurred recently.
 
         Args:
             recent_data: Recent price data with MAs
@@ -456,92 +458,35 @@ class GoldenCrossStrategy(BaseStrategy):
                 # Death Cross: fast MA crosses from above to below slow MA
                 if prev_fast >= prev_slow and current_fast < current_slow:
                     logger.debug(
-                        f"Death Cross detected: {prev_fast:.2f} >= {prev_slow:.2f} -> {current_fast:.2f} < {current_slow:.2f}"
+                        f"Crypto Death Cross detected: {prev_fast:.2f} >= {prev_slow:.2f} -> {current_fast:.2f} < {current_slow:.2f}"
                     )
                     return True
 
             return False
 
         except Exception as e:
-            logger.error(f"Error detecting Death Cross: {str(e)}")
+            logger.error(f"Error detecting Crypto Death Cross: {str(e)}")
             return False
 
     def get_strategy_summary(self) -> Dict:
-        """Get strategy-specific summary information."""
+        """Get crypto strategy-specific summary information."""
         summary = self.get_performance_summary()
 
-        # Add required fields for test compatibility
+        # Add crypto-specific metrics
         summary.update(
             {
-                "name": self.name,
-                "symbols": self.symbols,
-                "fast_ma_period": self.fast_ma_period,
-                "slow_ma_period": self.slow_ma_period,
+                "strategy_type": "crypto_golden_cross",
+                "fast_ma_period": self.config["fast_ma_period"],
+                "slow_ma_period": self.config["slow_ma_period"],
+                "min_data_requirements": self.get_minimum_data_requirements(),
+                "crypto_optimizations": [
+                    "20/50 moving averages (vs 50/200 traditional)",
+                    "Faster signal generation",
+                    "Lower data requirements (100+ days)",
+                    "Crypto-specific risk management",
+                    "Take profit and stop loss targets",
+                ],
             }
         )
-
-        # Add Golden Cross specific metrics
-        buy_signals = [
-            s for s in self.signals_history if s.signal_type == SignalType.BUY
-        ]
-        sell_signals = [
-            s
-            for s in self.signals_history
-            if s.signal_type in [SignalType.SELL, SignalType.CLOSE_LONG]
-        ]
-
-        golden_crosses = len(
-            [s for s in buy_signals if s.metadata.get("crossover_type") == "golden"]
-        )
-        death_crosses = len(
-            [s for s in sell_signals if s.metadata.get("crossover_type") == "death"]
-        )
-
-        if buy_signals and sell_signals:
-            # Calculate completed trades
-            completed_trades = []
-            for sell_signal in sell_signals:
-                # Find corresponding buy signal
-                buy_signal = None
-                for buy_sig in reversed(buy_signals):
-                    if (
-                        buy_sig.symbol == sell_signal.symbol
-                        and buy_sig.timestamp < sell_signal.timestamp
-                    ):
-                        buy_signal = buy_sig
-                        break
-
-                if buy_signal:
-                    holding_period = (sell_signal.timestamp - buy_signal.timestamp).days
-                    profit_loss_pct = sell_signal.metadata.get("profit_loss_pct", 0)
-                    completed_trades.append(
-                        {
-                            "holding_period": holding_period,
-                            "profit_loss_pct": profit_loss_pct,
-                        }
-                    )
-
-            if completed_trades:
-                avg_holding_period = np.mean(
-                    [t["holding_period"] for t in completed_trades]
-                )
-                win_rate = len(
-                    [t for t in completed_trades if t["profit_loss_pct"] > 0]
-                ) / len(completed_trades)
-                avg_return = np.mean([t["profit_loss_pct"] for t in completed_trades])
-
-                summary.update(
-                    {
-                        "avg_holding_period_days": round(avg_holding_period, 1),
-                        "win_rate": round(win_rate * 100, 1),
-                        "avg_return_pct": round(avg_return, 2),
-                        "completed_trades": len(completed_trades),
-                        "golden_crosses": golden_crosses,
-                        "death_crosses": death_crosses,
-                    }
-                )
-
-        summary["strategy_config"] = self.config
-        summary["current_crossover_states"] = self.crossover_states.copy()
 
         return summary

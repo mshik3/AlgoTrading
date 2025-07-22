@@ -8,7 +8,7 @@ from typing import Dict, Set, List
 
 def categorize_asset(symbol: str) -> str:
     """
-    Categorize asset by type.
+    Categorize asset by type using the new asset universe system.
 
     Args:
         symbol: The asset symbol to categorize
@@ -30,6 +30,30 @@ def categorize_asset(symbol: str) -> str:
     if not symbol.strip():
         return "Other"
 
+    # Use new asset universe system for categorization
+    try:
+        from utils.asset_universe_config import get_asset_info
+        asset_info = get_asset_info(symbol)
+        
+        if asset_info:
+            if asset_info["type"] == "stock":
+                return f"{asset_info.get('sector', 'Stock').title()} Stocks"
+            elif asset_info["type"] == "etf":
+                return f"{asset_info.get('category', 'ETF').title()} ETFs"
+            elif asset_info["type"] == "crypto":
+                return f"{asset_info.get('category', 'Crypto').title()} Crypto"
+            else:
+                return asset_info["type"].title()
+        else:
+            return "Other"
+            
+    except ImportError:
+        # Fallback to old categorization if new system not available
+        return _fallback_categorize_asset(symbol)
+
+
+def _fallback_categorize_asset(symbol: str) -> str:
+    """Fallback categorization for assets not in the new universe system."""
     # Major US ETFs
     us_etfs = {"SPY", "QQQ", "VTI", "IWM", "VEA", "VWO", "AGG", "TLT"}
     # Sector ETFs
@@ -44,16 +68,8 @@ def categorize_asset(symbol: str) -> str:
     commodity_etfs = {"GLD", "SLV", "USO", "DBA"}
     # Crypto - Only available in Alpaca API
     crypto = {
-        "BTCUSD",
-        "ETHUSD",
-        "DOTUSD",
-        "LINKUSD",
-        "LTCUSD",
-        "BCHUSD",
-        "XRPUSD",
-        "SOLUSD",
-        "AVAXUSD",
-        "UNIUSD",
+        "BTCUSD", "ETHUSD", "DOTUSD", "LINKUSD", "LTCUSD", "BCHUSD", 
+        "XRPUSD", "SOLUSD", "AVAXUSD", "UNIUSD",
     }
 
     if symbol in us_etfs:
@@ -76,40 +92,31 @@ def categorize_asset(symbol: str) -> str:
 
 def get_asset_categories() -> Dict[str, Set[str]]:
     """
-    Get all asset categories and their symbols.
+    Get all asset categories and their symbols using the new asset universe system.
 
     Returns:
         Dictionary mapping category names to sets of symbols
     """
-    return {
-        "US ETFs": {"SPY", "QQQ", "VTI", "IWM", "VEA", "VWO", "AGG", "TLT"},
-        "Sector ETFs": {"XLF", "XLK", "XLV", "XLE", "XLI", "XLP", "XLU", "XLB"},
-        "Tech Stocks": {
-            "AAPL",
-            "MSFT",
-            "GOOGL",
-            "AMZN",
-            "META",
-            "TSLA",
-            "NVDA",
-            "NFLX",
-        },
-        "Financial Stocks": {"JPM", "BAC", "WFC", "GS", "UNH", "JNJ"},
-        "International ETFs": {"EFA", "EEM", "FXI", "EWJ", "EWG", "EWU"},
-        "Commodity ETFs": {"GLD", "SLV", "USO", "DBA"},
-        "Crypto": {
-            "BTCUSD",
-            "ETHUSD",
-            "DOTUSD",
-            "LINKUSD",
-            "LTCUSD",
-            "BCHUSD",
-            "XRPUSD",
-            "SOLUSD",
-            "AVAXUSD",
-            "UNIUSD",
-        },
-    }
+    try:
+        from utils.asset_universe_config import get_asset_universe_manager
+        manager = get_asset_universe_manager()
+        categories = manager.get_asset_categories()
+        
+        # Convert lists to sets for backward compatibility
+        return {k: set(v) for k, v in categories.items()}
+        
+    except ImportError:
+        # Fallback to old categories if new system not available
+        return {
+            "US ETFs": {"SPY", "QQQ", "VTI", "IWM", "VEA", "VWO", "AGG", "TLT"},
+            "Sector ETFs": {"XLF", "XLK", "XLV", "XLE", "XLI", "XLP", "XLU", "XLB"},
+            "Tech Stocks": {"AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "NFLX"},
+            "Financial Stocks": {"JPM", "BAC", "WFC", "GS", "UNH", "JNJ"},
+            "International ETFs": {"EFA", "EEM", "FXI", "EWJ", "EWG", "EWU"},
+            "Commodity ETFs": {"GLD", "SLV", "USO", "DBA"},
+            "Crypto": {"BTCUSD", "ETHUSD", "DOTUSD", "LINKUSD", "LTCUSD", "BCHUSD", 
+                      "XRPUSD", "SOLUSD", "AVAXUSD", "UNIUSD"},
+        }
 
 
 def get_etf_rotation_universes() -> Dict[str, Dict[str, List[str]]]:

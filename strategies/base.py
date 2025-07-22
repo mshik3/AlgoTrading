@@ -69,18 +69,43 @@ class BaseStrategy(ABC):
     Provides common interface and functionality for strategy implementation.
     """
 
-    def __init__(self, name: str, symbols: List[str], alpaca_client=None, **config):
+    def __init__(
+        self, name: str, symbols: List[str] = None, alpaca_client=None, **config
+    ):
         """
         Initialize the strategy.
 
         Args:
             name: Strategy name
-            symbols: List of symbols to trade
+            symbols: List of symbols to trade (if None, uses strategy-optimized universe)
             alpaca_client: Optional AlpacaTradingClient for position synchronization
             **config: Strategy-specific configuration parameters
         """
         self.name = name
-        self.symbols = symbols
+
+        # Use new asset universe if no symbols provided
+        if symbols is None:
+            from utils.asset_universe_config import get_strategy_assets
+
+            strategy_type = name.lower().replace(" ", "_").replace("-", "_")
+            symbols = get_strategy_assets(strategy_type)
+            logger.info(
+                f"Using {len(symbols)} assets from {strategy_type} strategy universe"
+            )
+
+        # Filter out unavailable symbols
+        from utils.symbol_normalization import is_symbol_available_for_alpaca
+
+        original_count = len(symbols)
+        self.symbols = [s for s in symbols if is_symbol_available_for_alpaca(s)]
+        filtered_count = original_count - len(self.symbols)
+
+        if filtered_count > 0:
+            logger.warning(
+                f"Filtered out {filtered_count} unavailable symbols from {name} strategy. "
+                f"Using {len(self.symbols)} available symbols."
+            )
+
         self.alpaca_client = alpaca_client  # For broker position synchronization
         self.config = config
         self.positions = {}  # Track current positions (synced with broker)
@@ -412,64 +437,64 @@ class BaseStrategy(ABC):
     def _normalize_dataframe_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Normalize DataFrame column names to lowercase for consistency.
-        
+
         Args:
             df: DataFrame with potentially mixed case column names
-            
+
         Returns:
             DataFrame with normalized lowercase column names
         """
         # Create a mapping for common column name variations
         column_mapping = {
-            'Open': 'open',
-            'High': 'high', 
-            'Low': 'low',
-            'Close': 'close',
-            'Volume': 'volume',
-            'Adj Close': 'adj_close',
-            'Adj_Close': 'adj_close',
-            'adj_close': 'adj_close',  # Already correct
-            'open': 'open',  # Already correct
-            'high': 'high',  # Already correct
-            'low': 'low',  # Already correct
-            'close': 'close',  # Already correct
-            'volume': 'volume',  # Already correct
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+            "Adj Close": "adj_close",
+            "Adj_Close": "adj_close",
+            "adj_close": "adj_close",  # Already correct
+            "open": "open",  # Already correct
+            "high": "high",  # Already correct
+            "low": "low",  # Already correct
+            "close": "close",  # Already correct
+            "volume": "volume",  # Already correct
         }
-        
+
         # Rename columns that need normalization
         rename_dict = {}
         for col in df.columns:
             if col in column_mapping and col != column_mapping[col]:
                 rename_dict[col] = column_mapping[col]
-        
+
         if rename_dict:
             df = df.rename(columns=rename_dict)
             logger.debug(f"Normalized column names: {rename_dict}")
-            
+
         return df
 
     def _get_close_price(self, data: pd.DataFrame) -> pd.Series:
         """
         Safely get close price series with fallback column names.
-        
+
         Args:
             data: DataFrame with OHLCV data
-            
+
         Returns:
             Series with close prices
-            
+
         Raises:
             KeyError: If no close price column can be found
         """
         # Normalize column names first
         data = self._normalize_dataframe_columns(data)
-        
+
         # Try different possible column names for close price
-        close_columns = ['close', 'Close', 'CLOSE']
+        close_columns = ["close", "Close", "CLOSE"]
         for col in close_columns:
             if col in data.columns:
                 return data[col]
-        
+
         # If no close column found, raise error with helpful message
         available_columns = list(data.columns)
         raise KeyError(
@@ -477,41 +502,45 @@ class BaseStrategy(ABC):
             f"Expected one of: {close_columns}"
         )
 
-    def _validate_market_data(self, market_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+    def _validate_market_data(
+        self, market_data: Dict[str, pd.DataFrame]
+    ) -> Dict[str, pd.DataFrame]:
         """
         Validate and normalize market data column names.
-        
+
         Args:
             market_data: Dictionary mapping symbol -> OHLCV DataFrame
-            
+
         Returns:
             Dictionary with normalized DataFrames
         """
         validated_data = {}
-        
+
         for symbol, df in market_data.items():
             if df is None or df.empty:
                 logger.warning(f"Skipping {symbol}: DataFrame is None or empty")
                 continue
-                
+
             try:
                 # Normalize column names
                 normalized_df = self._normalize_dataframe_columns(df)
-                
+
                 # Validate required columns exist
-                required_cols = ['open', 'high', 'low', 'close', 'volume']
-                missing_cols = [col for col in required_cols if col not in normalized_df.columns]
-                
+                required_cols = ["open", "high", "low", "close", "volume"]
+                missing_cols = [
+                    col for col in required_cols if col not in normalized_df.columns
+                ]
+
                 if missing_cols:
                     logger.warning(f"Skipping {symbol}: Missing columns {missing_cols}")
                     continue
-                    
+
                 validated_data[symbol] = normalized_df
-                
+
             except Exception as e:
                 logger.error(f"Error validating data for {symbol}: {e}")
                 continue
-                
+
         return validated_data
 
     def get_performance_summary(self) -> Dict[str, Any]:
@@ -560,6 +589,33 @@ class BaseStrategy(ABC):
         """Update strategy configuration."""
         self.config.update(new_config)
         logger.info(f"{self.name}: Updated configuration with {new_config}")
+
+    def get_minimum_data_requirements(self) -> int:
+        """
+        Get minimum number of days of data required for this strategy.
+
+        Returns:
+            Minimum number of days required (default: 200)
+        """
+        return 200
+
+    def get_strategy_type(self) -> str:
+        """
+        Get the strategy type for categorization.
+
+        Returns:
+            Strategy type string (e.g., 'golden_cross', 'mean_reversion', 'crypto')
+        """
+        return self.name.lower().replace(" ", "_").replace("-", "_")
+
+    def is_crypto_strategy(self) -> bool:
+        """
+        Check if this strategy is optimized for crypto trading.
+
+        Returns:
+            True if crypto-optimized, False otherwise
+        """
+        return "crypto" in self.get_strategy_type()
 
     def __str__(self):
         return f"{self.name}(symbols={self.symbols}, positions={len(self.positions)})"

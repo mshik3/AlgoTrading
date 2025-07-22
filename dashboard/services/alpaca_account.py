@@ -168,8 +168,13 @@ class AlpacaAccountService:
                         api_key=self.api_key, secret_key=self.secret_key
                     )
 
+                    # Normalize symbol for Alpaca API compatibility
+                    from utils.symbol_normalization import normalize_symbol_for_alpaca
+
+                    normalized_symbol = normalize_symbol_for_alpaca(position.symbol)
+
                     quote_request = StockLatestQuoteRequest(
-                        symbol_or_symbols=position.symbol
+                        symbol_or_symbols=normalized_symbol
                     )
                     quote = data_client.get_stock_latest_quote(quote_request)
                     current_price = float(quote[position.symbol].ask_price)

@@ -10,8 +10,8 @@ from typing import List, Optional, Union, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Valid stock symbol pattern (1-5 letters, optionally followed by numbers/dots)
-SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
+# Valid stock symbol pattern (1-5 letters, optionally followed by numbers/dots/hyphens)
+SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}([.-][A-Z0-9]{1,2})?$")
 
 # Valid period patterns for data collection
 VALID_PERIODS = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}

@@ -604,6 +604,15 @@ class MeanReversionStrategy(BaseStrategy):
             if symbol in self.position_entry_dates:
                 del self.position_entry_dates[symbol]
 
+    def get_minimum_data_requirements(self) -> int:
+        """
+        Get minimum number of days of data required for Mean Reversion strategy.
+
+        Returns:
+            Minimum number of days required (50 for RSI, Z-score, and Bollinger Bands)
+        """
+        return 50
+
     def get_strategy_summary(self) -> Dict:
         """Get enhanced strategy-specific summary information."""
         summary = self.get_performance_summary()

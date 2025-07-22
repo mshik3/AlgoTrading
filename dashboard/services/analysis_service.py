@@ -94,66 +94,21 @@ class DashboardAnalysisService:
 
     def setup_strategies(self):
         """Initialize trading strategies."""
-        # Define the asset universe
-        self.symbols = [
-            # Major US ETFs (8)
-            "SPY",
-            "QQQ",
-            "VTI",
-            "IWM",
-            "VEA",
-            "VWO",
-            "AGG",
-            "TLT",
-            # Sector ETFs (8)
-            "XLF",
-            "XLK",
-            "XLV",
-            "XLE",
-            "XLI",
-            "XLP",
-            "XLU",
-            "XLB",
-            # Major Tech Stocks (8)
-            "AAPL",
-            "MSFT",
-            "GOOGL",
-            "AMZN",
-            "META",
-            "TSLA",
-            "NVDA",
-            "NFLX",
-            # Financial & Industrial (6)
-            "JPM",
-            "BAC",
-            "WFC",
-            "GS",
-            "UNH",
-            "JNJ",
-            # International ETFs (6)
-            "EFA",
-            "EEM",
-            "FXI",
-            "EWJ",
-            "EWG",
-            "EWU",
-            # Commodity ETFs (4)
-            "GLD",
-            "SLV",
-            "USO",
-            "DBA",
-            # Crypto (10) - Only available in Alpaca API
-            "BTCUSD",
-            "ETHUSD",
-            "DOTUSD",
-            "LINKUSD",
-            "LTCUSD",
-            "BCHUSD",
-            "XRPUSD",
-            "SOLUSD",
-            "AVAXUSD",
-            "UNIUSD",
-        ]
+        # Use new asset universe system
+        from utils.asset_universe_config import (
+            get_920_asset_universe,
+            get_universe_summary,
+        )
+
+        # Get the complete 920-asset universe
+        self.symbols = get_920_asset_universe()
+
+        # Log universe summary
+        summary = get_universe_summary()
+        logger.info(f"Dashboard using {len(self.symbols)}-asset universe:")
+        logger.info(f"  - Fortune 500: {summary['fortune500_count']}")
+        logger.info(f"  - ETFs: {summary['etf_count']}")
+        logger.info(f"  - Crypto: {summary['crypto_count']}")
 
         # Initialize strategies with modern PFund framework
         try:
@@ -179,24 +134,47 @@ class DashboardAnalysisService:
                 self.golden_cross = None
                 self.mean_reversion = None
 
-    def fetch_market_data(self) -> Dict[str, pd.DataFrame]:
+    def fetch_market_data(self, strategy=None) -> Dict[str, pd.DataFrame]:
         """
         Fetch market data for all symbols with retry logic.
+
+        Args:
+            strategy: Optional strategy instance to get minimum data requirements
 
         Returns:
             Dictionary mapping symbol -> OHLCV DataFrame
         """
-        logger.info(f"Fetching market data for {len(self.symbols)} symbols...")
+        # Get minimum data requirements from strategy if provided
+        min_days_required = 200  # Default requirement
+        if strategy and hasattr(strategy, "get_minimum_data_requirements"):
+            min_days_required = strategy.get_minimum_data_requirements()
+            logger.info(
+                f"Using strategy-specific data requirement: {min_days_required} days"
+            )
+        elif strategy and hasattr(strategy, "config") and "min_data_days" in strategy.config:
+            min_days_required = strategy.config["min_data_days"]
+            logger.info(
+                f"Using strategy config data requirement: {min_days_required} days"
+            )
+
+        logger.info(
+            f"Fetching market data for {len(self.symbols)} symbols (min {min_days_required} days)..."
+        )
+        logger.info(
+            f"Note: Symbols with insufficient historical data will be skipped gracefully"
+        )
 
         market_data = {}
         successful_fetches = 0
         max_retries = 3
 
+        skipped_symbols = 0
         for symbol in self.symbols:
             retry_count = 0
             data = None
+            should_skip = False
 
-            while retry_count < max_retries and data is None:
+            while retry_count < max_retries and data is None and not should_skip:
                 try:
                     if self.data_collector:
                         # Validate symbol availability first
@@ -204,6 +182,7 @@ class DashboardAnalysisService:
                             logger.warning(
                                 f"Skipping {symbol} - not available in Alpaca API"
                             )
+                            should_skip = True
                             break
 
                         # Use real Alpaca data
@@ -211,7 +190,11 @@ class DashboardAnalysisService:
                     else:
                         raise Exception("Alpaca data collector not available")
 
-                    if data is not None and not data.empty and len(data) >= 200:
+                    if (
+                        data is not None
+                        and not data.empty
+                        and len(data) >= min_days_required
+                    ):
                         market_data[symbol] = data
                         successful_fetches += 1
                         logger.info(f"✓ {symbol}: {len(data)} days of data")
@@ -221,19 +204,33 @@ class DashboardAnalysisService:
                             logger.warning(
                                 f"✗ No data returned for {symbol} (attempt {retry_count + 1})"
                             )
+                            # This is retryable - API might be temporarily unavailable
                         elif data.empty:
                             logger.warning(
                                 f"✗ Empty data for {symbol} (attempt {retry_count + 1})"
                             )
+                            # This is retryable - API might be temporarily unavailable
                         else:
+                            # Insufficient data is NOT retryable - symbol simply doesn't have enough history
                             logger.warning(
-                                f"✗ Insufficient data for {symbol}: {len(data)} days (need >= 200) (attempt {retry_count + 1})"
+                                f"✗ Skipping {symbol} - insufficient data: {len(data)} days (need >= {min_days_required})"
                             )
+                            should_skip = True
+                            skipped_symbols += 1
+                            break
                         data = None  # Reset for retry
 
                 except Exception as e:
                     retry_count += 1
-                    if retry_count < max_retries:
+                    error_msg = str(e).lower()
+                    
+                    # Check if this is a non-retryable error (like symbol not found)
+                    if any(keyword in error_msg for keyword in ['not found', 'symbol not available', 'invalid symbol']):
+                        logger.warning(f"Skipping {symbol} - symbol not available: {e}")
+                        should_skip = True
+                        skipped_symbols += 1
+                        break
+                    elif retry_count < max_retries:
                         logger.warning(
                             f"Error fetching data for {symbol} (attempt {retry_count}): {e}. Retrying..."
                         )
@@ -246,7 +243,7 @@ class DashboardAnalysisService:
                         )
 
         logger.info(
-            f"Successfully fetched data for {successful_fetches}/{len(self.symbols)} symbols"
+            f"Data fetch complete: {successful_fetches} successful, {skipped_symbols} skipped due to insufficient data, {len(self.symbols) - successful_fetches - skipped_symbols} failed"
         )
         return market_data
 
@@ -260,8 +257,8 @@ class DashboardAnalysisService:
         logger.info("Running Golden Cross strategy analysis...")
 
         try:
-            # Fetch market data
-            market_data = self.fetch_market_data()
+            # Fetch market data with strategy-specific requirements
+            market_data = self.fetch_market_data(self.golden_cross)
 
             if not market_data:
                 return {
@@ -301,8 +298,8 @@ class DashboardAnalysisService:
         logger.info("Running Mean Reversion strategy analysis...")
 
         try:
-            # Fetch market data
-            market_data = self.fetch_market_data()
+            # Fetch market data with strategy-specific requirements
+            market_data = self.fetch_market_data(self.mean_reversion)
 
             if not market_data:
                 return {
@@ -342,8 +339,8 @@ class DashboardAnalysisService:
         logger.info("Running combined strategy analysis...")
 
         try:
-            # Fetch market data
-            market_data = self.fetch_market_data()
+            # Fetch market data with strategy-specific requirements (use lower requirement)
+            market_data = self.fetch_market_data(self.mean_reversion)
 
             if not market_data:
                 return {
@@ -442,7 +439,9 @@ class DashboardAnalysisService:
             # Initialize sector rotation strategy with modern PFund framework
             etf_universe = get_etf_universe_for_strategy("sector_rotation")
             try:
-                sector_rotation = create_strategy("sector_rotation", sectors=etf_universe)
+                sector_rotation = create_strategy(
+                    "sector_rotation", sectors=etf_universe
+                )
             except Exception as e:
                 logger.error(f"Modern sector rotation strategy creation failed: {e}")
                 sector_rotation = ModernSectorRotationStrategy(sectors=etf_universe)
@@ -498,12 +497,20 @@ class DashboardAnalysisService:
             sector_rotation_universe = get_etf_universe_for_strategy("sector_rotation")
 
             try:
-                dual_momentum = create_strategy("dual_momentum", assets=dual_momentum_universe)
-                sector_rotation = create_strategy("sector_rotation", sectors=sector_rotation_universe)
+                dual_momentum = create_strategy(
+                    "dual_momentum", assets=dual_momentum_universe
+                )
+                sector_rotation = create_strategy(
+                    "sector_rotation", sectors=sector_rotation_universe
+                )
             except Exception as e:
                 logger.error(f"Modern ETF strategy creation failed: {e}")
-                dual_momentum = ModernDualMomentumStrategy(assets=dual_momentum_universe)
-                sector_rotation = ModernSectorRotationStrategy(sectors=sector_rotation_universe)
+                dual_momentum = ModernDualMomentumStrategy(
+                    assets=dual_momentum_universe
+                )
+                sector_rotation = ModernSectorRotationStrategy(
+                    sectors=sector_rotation_universe
+                )
 
             # Fetch market data
             market_data = self.fetch_market_data()
@@ -560,12 +567,18 @@ class DashboardAnalysisService:
             etf_universe_sector = get_etf_universe_for_strategy("sector_rotation")
 
             try:
-                dual_momentum = create_strategy("dual_momentum", assets=etf_universe_dual)
-                sector_rotation = create_strategy("sector_rotation", sectors=etf_universe_sector)
+                dual_momentum = create_strategy(
+                    "dual_momentum", assets=etf_universe_dual
+                )
+                sector_rotation = create_strategy(
+                    "sector_rotation", sectors=etf_universe_sector
+                )
             except Exception as e:
                 logger.error(f"Modern strategy creation failed: {e}")
                 dual_momentum = ModernDualMomentumStrategy(assets=etf_universe_dual)
-                sector_rotation = ModernSectorRotationStrategy(sectors=etf_universe_sector)
+                sector_rotation = ModernSectorRotationStrategy(
+                    sectors=etf_universe_sector
+                )
 
             # Fetch market data
             market_data = self.fetch_market_data()

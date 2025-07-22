@@ -190,7 +190,10 @@ class AlpacaTradingClient:
         """Convert our symbol format to Alpaca's format."""
         if self._is_crypto_symbol(symbol):
             return self.crypto_symbols[symbol]
-        return symbol
+        
+        # Normalize stock symbols for Alpaca API compatibility
+        from utils.symbol_normalization import normalize_symbol_for_alpaca
+        return normalize_symbol_for_alpaca(symbol)
 
     def _get_data_client(self, symbol: str):
         """Get the appropriate data client for the symbol type."""
@@ -290,6 +293,11 @@ class AlpacaTradingClient:
             # Get appropriate client and symbol format
             client = self._get_data_client(symbol)
             alpaca_symbol = self._get_alpaca_symbol(symbol)
+
+            # Log symbol normalization if it occurred
+            from utils.symbol_normalization import is_symbol_normalized
+            if is_symbol_normalized(symbol):
+                logger.info(f"Normalized symbol for price fetch: {symbol} -> {alpaca_symbol}")
 
             logger.debug(
                 f"Fetching price for {symbol} (Alpaca symbol: {alpaca_symbol})"

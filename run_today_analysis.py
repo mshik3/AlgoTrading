@@ -199,13 +199,19 @@ class TodayInvestmentAnalyzer:
                     successful_fetches += 1
                     logger.debug(f"✓ {symbol}: {len(data)} days of data")
                 else:
-                    logger.warning(f"✗ {symbol}: Insufficient data")
+                    if data is None or data.empty:
+                        logger.warning(f"✗ {symbol}: No data available")
+                    else:
+                        logger.warning(
+                            f"✗ {symbol}: Insufficient data ({len(data)} days, need >= 250)"
+                        )
 
             except Exception as e:
                 logger.error(f"Error fetching data for {symbol}: {str(e)}")
 
+        failed_count = len(symbols_list) - successful_fetches
         logger.info(
-            f"Successfully fetched real data for {successful_fetches}/{len(symbols_list)} symbols"
+            f"Data fetch complete: {successful_fetches} successful, {failed_count} failed or insufficient"
         )
 
         return market_data

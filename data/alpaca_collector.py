@@ -123,18 +123,34 @@ class AlpacaDataCollector:
         """Load available crypto symbols from Alpaca Assets API."""
         try:
             from .alpaca_assets import get_available_crypto_symbols
+            from .crypto_universe import get_alpaca_crypto_symbols
 
-            available_symbols = get_available_crypto_symbols()
+            # Try to get symbols from our crypto universe first
+            try:
+                alpaca_symbols = get_alpaca_crypto_symbols()
+                for alpaca_symbol in alpaca_symbols:
+                    # Convert "BTC/USD" to "BTCUSD"
+                    our_symbol = alpaca_symbol.replace("/", "")
+                    self.crypto_symbols[our_symbol] = alpaca_symbol
 
-            # Create mapping from our format to Alpaca format
-            for alpaca_symbol in available_symbols:
-                # Convert "BTC/USD" to "BTCUSD"
-                our_symbol = alpaca_symbol.replace("/", "")
-                self.crypto_symbols[our_symbol] = alpaca_symbol
+                logger.info(
+                    f"Loaded {len(self.crypto_symbols)} crypto symbols from crypto universe"
+                )
 
-            logger.info(
-                f"Loaded {len(self.crypto_symbols)} crypto symbols from Alpaca Assets API"
-            )
+            except Exception as e:
+                logger.warning(f"Failed to load from crypto universe: {e}")
+                # Fallback to Alpaca Assets API
+                available_symbols = get_available_crypto_symbols()
+
+                # Create mapping from our format to Alpaca format
+                for alpaca_symbol in available_symbols:
+                    # Convert "BTC/USD" to "BTCUSD"
+                    our_symbol = alpaca_symbol.replace("/", "")
+                    self.crypto_symbols[our_symbol] = alpaca_symbol
+
+                logger.info(
+                    f"Loaded {len(self.crypto_symbols)} crypto symbols from Alpaca Assets API"
+                )
 
         except Exception as e:
             logger.warning(f"Failed to load crypto symbols from Assets API: {e}")
@@ -174,7 +190,11 @@ class AlpacaDataCollector:
         """Convert our symbol format to Alpaca's format."""
         if self._is_crypto_symbol(symbol):
             return self.crypto_symbols[symbol]
-        return symbol
+
+        # Normalize stock symbols for Alpaca API compatibility
+        from utils.symbol_normalization import normalize_symbol_for_alpaca
+
+        return normalize_symbol_for_alpaca(symbol)
 
     def get_available_crypto_symbols(self) -> list:
         """Get list of available crypto symbols in our format."""
@@ -304,7 +324,34 @@ class AlpacaDataCollector:
             )
             return False
 
-        # For non-crypto symbols, assume they're available (stocks/ETFs)
+        # Check if symbol is known to be unavailable in Alpaca
+        from utils.symbol_normalization import (
+            normalize_symbol_for_alpaca,
+            is_symbol_normalized,
+            is_symbol_available_for_alpaca,
+            get_fallback_symbol,
+        )
+
+        if not is_symbol_available_for_alpaca(symbol):
+            fallback_symbol = get_fallback_symbol(symbol)
+            if fallback_symbol:
+                logger.warning(
+                    f"Symbol {symbol} is not available in Alpaca API. "
+                    f"Will use fallback: {fallback_symbol}"
+                )
+                # Return True to allow the fetch to proceed with fallback
+                return True
+            else:
+                logger.error(
+                    f"Symbol {symbol} is not available in Alpaca API and no fallback is configured"
+                )
+                return False
+
+        # For non-crypto symbols, normalize and assume they're available (stocks/ETFs)
+        if is_symbol_normalized(symbol):
+            normalized = normalize_symbol_for_alpaca(symbol)
+            logger.debug(f"Validating normalized symbol: {symbol} -> {normalized}")
+
         return True
 
     def fetch_daily_data(
@@ -376,6 +423,14 @@ class AlpacaDataCollector:
             client = self._get_client(symbol)
             alpaca_symbol = self._get_alpaca_symbol(symbol)
 
+            # Log symbol normalization if it occurred
+            from utils.symbol_normalization import is_symbol_normalized
+
+            if is_symbol_normalized(symbol):
+                logger.info(
+                    f"Normalized symbol for data fetch: {symbol} -> {alpaca_symbol}"
+                )
+
             # Create appropriate request based on asset type
             if self._is_crypto_symbol(symbol):
                 request = CryptoBarsRequest(
@@ -393,7 +448,7 @@ class AlpacaDataCollector:
                     start=start_date,
                     end=end_date,
                 )
-                logger.info(f"Stock request created for {symbol}")
+                logger.info(f"Stock request created for {symbol} ({alpaca_symbol})")
                 bars = client.get_stock_bars(request)
 
                 # Validate the bars response structure
@@ -571,6 +626,67 @@ class AlpacaDataCollector:
                 prices[symbol] = price
 
         return prices
+
+    def fetch_large_dataset_batch(
+        self, symbols: List[str], period: str = "1y", batch_size: int = 50
+    ) -> pd.DataFrame:
+        """
+        Fetch data for large datasets (920 assets) using batch processing.
+
+        Args:
+            symbols: List of symbols to fetch
+            period: Time period for data
+            batch_size: Number of symbols to process in each batch
+
+        Returns:
+            DataFrame with combined data for all symbols
+        """
+        import time
+
+        logger.info(
+            f"Starting batch processing for {len(symbols)} symbols with batch size {batch_size}"
+        )
+
+        all_data = []
+        total_batches = (len(symbols) + batch_size - 1) // batch_size
+
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i : i + batch_size]
+            batch_num = (i // batch_size) + 1
+
+            logger.info(
+                f"Processing batch {batch_num}/{total_batches} ({len(batch)} symbols)"
+            )
+
+            for symbol in batch:
+                try:
+                    data = self.fetch_daily_data(symbol, period=period)
+                    if data is not None and not data.empty:
+                        data["symbol"] = symbol
+                        all_data.append(data)
+                        logger.debug(f"✓ Added data for {symbol}")
+                    else:
+                        logger.warning(f"✗ No data for {symbol}")
+                except Exception as e:
+                    logger.error(f"✗ Error fetching {symbol}: {e}")
+                    continue
+
+            # Rate limiting between batches
+            if batch_num < total_batches:
+                logger.info(f"Rate limiting: waiting 1 second before next batch")
+                time.sleep(1)
+
+        if not all_data:
+            logger.warning("No data collected from any symbols")
+            return pd.DataFrame()
+
+        # Combine all data
+        combined_data = pd.concat(all_data, ignore_index=True)
+        logger.info(
+            f"✓ Successfully collected data for {len(combined_data['symbol'].unique())} symbols"
+        )
+
+        return combined_data
 
     def test_connection(self) -> bool:
         """

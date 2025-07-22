@@ -211,6 +211,15 @@ class ModernGoldenCrossStrategy(BaseStrategy):
 
         return None
 
+    def get_minimum_data_requirements(self) -> int:
+        """
+        Get minimum number of days of data required for Modern Golden Cross strategy.
+
+        Returns:
+            Minimum number of days required (220 for 200-day MA + buffer)
+        """
+        return 220
+
     def get_strategy_summary(self) -> Dict:
         """Get strategy-specific summary information."""
         summary = self.get_performance_summary()
@@ -479,6 +488,15 @@ class ModernMeanReversionStrategy(BaseStrategy):
 
         return None
 
+    def get_minimum_data_requirements(self) -> int:
+        """
+        Get minimum number of days of data required for Modern Mean Reversion strategy.
+
+        Returns:
+            Minimum number of days required (50 for Z-score calculation)
+        """
+        return 50
+
     def get_strategy_summary(self) -> Dict:
         """Get enhanced strategy-specific summary information."""
         summary = self.get_performance_summary()
@@ -647,12 +665,15 @@ class ModernSectorRotationStrategy(BaseETFRotationStrategy):
                     signal = StrategySignal(
                         symbol=sector,
                         signal_type=SignalType.BUY,
-                        confidence=min(0.9, (momentum + 0.2) / 0.4),  # Normalize confidence
+                        confidence=min(
+                            0.9, (momentum + 0.2) / 0.4
+                        ),  # Normalize confidence
                         price=close_prices.iloc[-1],
                         strategy_name=self.name,
                         metadata={
                             "momentum": momentum,
-                            "rank": len([s for s, m in ranked_sectors if m > momentum]) + 1,
+                            "rank": len([s for s, m in ranked_sectors if m > momentum])
+                            + 1,
                             "top_n": self.top_n,
                         },
                     )
